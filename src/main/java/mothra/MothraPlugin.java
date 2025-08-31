@@ -68,8 +68,9 @@ import ghidra.program.model.lang.LanguageCompilerSpecPair;
 import ghidra.util.HelpLocation;
 import ghidra.util.task.ConsoleTaskMonitor;
 import ghidra.util.task.TaskMonitor;
-import mothra.loader.EVMLoader;
 import mothra.loader.EOFLoader;
+import mothra.loader.EVMLoader;
+import mothra.loader.traceLoader;
 
 //@formatter:off
 @PluginInfo(
@@ -107,7 +108,7 @@ public class MothraPlugin extends Plugin
 			HelpLocation help = new HelpLocation("ImporterPlugin", "Project_Tree");
 
 			options.registerOption(SIMPLE_UNPACK_OPTION, SIMPLE_UNPACK_OPTION_DEFAULT, help,
-				"Perform simple unpack when any packed DB file is imported");
+					"Perform simple unpack when any packed DB file is imported");
 		}
 
 		setupDownloadBytecodeAction();
@@ -135,6 +136,8 @@ public class MothraPlugin extends Plugin
 
 		if (event instanceof ProgramActivatedPluginEvent) {
 			ProgramActivatedPluginEvent pape = (ProgramActivatedPluginEvent) event;
+			// Update the transaction trace provider when a new program is activated
+			// This functionality is now handled by the TransactionTracePlugin
 		}
 	}
 
@@ -147,7 +150,7 @@ public class MothraPlugin extends Plugin
 		};
 		downloadBytecodeAction
 				.setMenuBarData(new MenuData(new String[] { "&File", "Download ByteCode" }, null,
-					"Import", MenuData.NO_MNEMONIC, "1"));
+						"Import", MenuData.NO_MNEMONIC, "1"));
 		downloadBytecodeAction.setKeyBindingData(null);
 		downloadBytecodeAction.setEnabled(true);
 		downloadBytecodeAction.markHelpUnnecessary();
@@ -174,11 +177,11 @@ public class MothraPlugin extends Plugin
 
 		// Set up the main content
 		setupMainContent(dialog, networkOptionsComboBox, filenameTextArea,
-			fetchBytecodeOptionTextArea);
+				fetchBytecodeOptionTextArea);
 
 		// Set up the buttons and their actions
 		setupButtonsAndActions(dialog, networkOptionsComboBox, filenameTextArea,
-			fetchBytecodeOptionTextArea);
+				fetchBytecodeOptionTextArea);
 
 		// Finalize the dialog setup
 		finalizeDialog(dialog);
@@ -211,11 +214,11 @@ public class MothraPlugin extends Plugin
 
 		mainPanel.add(createPanel("Network", networkOptionsComboBox), BorderLayout.NORTH);
 		mainPanel.add(createPanel("File Name", new JScrollPane(filenameTextArea)),
-			BorderLayout.CENTER);
+				BorderLayout.CENTER);
 		mainPanel.add(
-			createPanel("Deployed Bytecode / Contract Address",
-				new JScrollPane(fetchBytecodeOptionTextArea)),
-			BorderLayout.SOUTH);
+				createPanel("Deployed Bytecode / Contract Address / Transaction Hash",
+						new JScrollPane(fetchBytecodeOptionTextArea)),
+				BorderLayout.SOUTH);
 
 		dialog.add(mainPanel, BorderLayout.CENTER);
 	}
@@ -230,12 +233,14 @@ public class MothraPlugin extends Plugin
 
 	private void setupButtonsAndActions(JDialog dialog, JComboBox<String> networkOptionsComboBox,
 			JTextArea filenameTextArea, JTextArea fetchBytecodeOptionTextArea) {
-		JPanel buttonPanel = new JPanel(new GridLayout(1, 2));
+		JPanel buttonPanel = new JPanel(new GridLayout(1, 4));
 		JButton loadByBytecodeButton = new JButton("By Bytecode");
 		JButton loadByAddressButton = new JButton("By Address");
+		JButton loadByTxHashButton = new JButton("By Transaction");
 
 		buttonPanel.add(loadByBytecodeButton);
 		buttonPanel.add(loadByAddressButton);
+		buttonPanel.add(loadByTxHashButton);
 		dialog.add(buttonPanel, BorderLayout.SOUTH);
 
 		Map<String, String> rpcNodeLinks = setupRpcNodeLinks();
@@ -248,10 +253,15 @@ public class MothraPlugin extends Plugin
 		loadByAddressButton.addActionListener(e -> {
 			dialog.dispose();
 			String selectedNetwork = (String) networkOptionsComboBox.getSelectedItem();
-			String rpcEndpoint =
-				rpcNodeLinks.getOrDefault(selectedNetwork, filenameTextArea.getText());
+			String rpcEndpoint = rpcNodeLinks.getOrDefault(selectedNetwork, filenameTextArea.getText());
 			fetchContractBytecode(rpcEndpoint, fetchBytecodeOptionTextArea.getText(),
-				filenameTextArea.getText());
+					filenameTextArea.getText());
+		});
+
+		loadByTxHashButton.addActionListener(e -> {
+			dialog.dispose();
+			String txHash = fetchBytecodeOptionTextArea.getText().trim();
+			loadTransactionTrace(txHash, filenameTextArea.getText());
 		});
 	}
 
@@ -274,14 +284,12 @@ public class MothraPlugin extends Plugin
 			String filename) {
 		// Set up the web3j service
 		String errorTitle = "Failed to fetch bytecode";
-		String errorMessage =
-			"The fetched bytecode is null or empty. Please check the contract address and try again.";
+		String errorMessage = "The fetched bytecode is null or empty. Please check the contract address and try again.";
 		Web3j web3j = Web3j.build(new HttpService(rpcEndpoint));
 
 		try {
 			// Fetch the contract bytecode.
-			EthGetCode ethGetCode =
-				web3j.ethGetCode(contractAddress, DefaultBlockParameterName.LATEST).send();
+			EthGetCode ethGetCode = web3j.ethGetCode(contractAddress, DefaultBlockParameterName.LATEST).send();
 			String bytecode = ethGetCode.getCode();
 
 			if (bytecode == null || bytecode.isEmpty())
@@ -289,8 +297,7 @@ public class MothraPlugin extends Plugin
 			else
 				loadBytecode(bytecode, filename);
 
-		}
-		catch (IOException e) {
+		} catch (IOException e) {
 			e.printStackTrace();
 			showErrorPopup(errorTitle, errorMessage);
 		}
@@ -312,8 +319,7 @@ public class MothraPlugin extends Plugin
 				EVMLoader loader = new EVMLoader();
 				compilerSpec = new LanguageCompilerSpecPair("evm:256:default", "default");
 				loadSpec = new LoadSpec(loader, 0, compilerSpec, true);
-			}
-			else {
+			} else {
 				EOFLoader loader = new EOFLoader();
 				compilerSpec = new LanguageCompilerSpecPair("EVM:256:EOF", "V1");
 				loadSpec = new LoadSpec(loader, 0, compilerSpec, true);
@@ -321,8 +327,7 @@ public class MothraPlugin extends Plugin
 
 			// Load the bytecode using the custom loader
 			loadAndSaveBytecode(cleanedBytecode, fullFilename, loadSpec);
-		}
-		catch (Exception e) {
+		} catch (Exception e) {
 			e.printStackTrace();
 		}
 	}
@@ -348,7 +353,7 @@ public class MothraPlugin extends Plugin
 
 		LoadResults<? extends DomainObject> results = loadSpec.getLoader()
 				.load(provider, filename, project, "",
-					loadSpec, new ArrayList<>(), new MessageLog(), consumer, monitor);
+						loadSpec, new ArrayList<>(), new MessageLog(), consumer, monitor);
 
 		// Save the loading results to the project
 		results.save(project, consumer, null, monitor);
@@ -368,5 +373,20 @@ public class MothraPlugin extends Plugin
 			byteCode[i++] = (byte) Integer.parseInt(hexDigit, 16);
 		}
 		return byteCode;
+	}
+
+	private void loadTransactionTrace(String txHash, String filename) {
+		String fullFilename = appendSuffix(filename, ".evm");
+		try {
+			LanguageCompilerSpecPair compilerSpec = new LanguageCompilerSpecPair("evm:256:default", "default");
+			traceLoader loader = new traceLoader();
+			LoadSpec loadSpec = new LoadSpec(loader, 0, compilerSpec, true);
+
+			loadAndSaveBytecode(txHash, fullFilename, loadSpec);
+		} catch (Exception e) {
+			e.printStackTrace();
+			showErrorPopup("Failed to load transaction trace",
+					"Error loading transaction trace: " + e.getMessage());
+		}
 	}
 }

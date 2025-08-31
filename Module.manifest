@@ -1,0 +1,5 @@
+## @category:LOADERS
+## @key:traceLoader
+## @package:mothra.loader
+## @provides:ghidra.app.util.opinion.Loader
+## @description:EVM Transaction Trace Loader
