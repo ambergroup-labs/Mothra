@@ -8,11 +8,8 @@ define alignment=1;
 
 # imaginary stack pointer
 
-# 64bit address space is enough for evm, https://github.com/ethereum/go-ethereum/blob/master/core/vm/instructions.go#L502
-# define space ram      type=ram_space      size=8       wordsize=1;
-# EIP-170: Contract code size limit. MAX_CODE_SIZE: 0x6000
-define space code     type=ram_space      size=2       default wordsize=1;
-# hidden stack space, stack is limited to 1024 slots. One uint32 takes 4 words, so 1024 * 4 = 4096 space is enough
+
+define space ram      type=ram_space      size=4       default wordsize=1;
 define space stk      type=ram_space      size=2       wordsize=8;
 
 define space register type=register_space size=2;
@@ -664,14 +661,18 @@ define pcodeop _gas;
 
 :JUMP is op=0x56 {
     pop(r0);
-    goto [r0];
+    local p:4 = r0:4;
+    local p1:4 = (inst_next & 0xFFFF0000) + p;
+    goto [p1];
 }
 
 :JUMPI is op=0x57 {
     pop(r0);
     pop(r1);
     if (r1 == 0) goto inst_next;
-    goto [r0];
+    local p:4 = r0:4;
+    local p1:4 = (inst_next & 0xFFFF0000) + p;
+    goto [p1];
 }
 
 :JUMPDEST is op=0x5b { }

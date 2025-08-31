@@ -6,10 +6,10 @@
 <data_organization>
   </data_organization>
   <global>
-    <range space="code"/>
+    <range space="ram"/>
   </global>
   <readonly>
-    <range space="code"/>
+    <range space="ram"/>
   </readonly>
   <stackpointer register="SP" space="stk" growth="negative" />
 
