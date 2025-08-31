@@ -1,4 +1,10 @@
 ## @category:COMMON
+## @key:SourceCodePlugin
+## @package:mothra.loader
+## @provides:ghidra.app.plugin.ProgramPlugin
+## @description:EVM Contract Source Viewer
+
+## @category:COMMON
 ## @key:TraceViewerPlugin
 ## @package:mothra.loader
 ## @provides:ghidra.app.plugin.ProgramPlugin
