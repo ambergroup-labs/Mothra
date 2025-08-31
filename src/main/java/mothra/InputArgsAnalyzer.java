@@ -1,17 +1,33 @@
 package mothra;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import ghidra.app.services.AbstractAnalyzer;
 import ghidra.app.services.AnalysisPriority;
 import ghidra.app.services.AnalyzerType;
 import ghidra.app.util.importer.MessageLog;
-import ghidra.program.model.address.*;
+import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressSet;
+import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.lang.Processor;
-import ghidra.program.model.listing.*;
+import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.FunctionManager;
+import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.listing.InstructionIterator;
+import ghidra.program.model.listing.Parameter;
+import ghidra.program.model.listing.ParameterImpl;
+import ghidra.program.model.listing.Program;
+import ghidra.program.model.listing.VariableStorage;
+import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.SourceType;
-import ghidra.util.exception.*;
+import ghidra.util.exception.CancelledException;
+import ghidra.util.exception.DuplicateNameException;
+import ghidra.util.exception.InvalidInputException;
 import ghidra.util.task.TaskMonitor;
 import mothra.evm.Opcode;
 
@@ -39,8 +55,27 @@ public class InputArgsAnalyzer extends AbstractAnalyzer {
 	@Override
 	public boolean added(Program program, AddressSetView set, TaskMonitor monitor, MessageLog log)
 			throws CancelledException {
-		analyzeInstructions(program, set);
-		processEntries(program);
+		MemoryBlock[] memoryBlocks = program.getMemory().getBlocks();
+
+		for (MemoryBlock block : memoryBlocks) {
+			if (monitor.isCancelled()) {
+				throw new CancelledException();
+			}
+
+			if (!block.isExecute()) {
+				continue;
+			}
+
+			entries.clear();
+			jumpSources.clear();
+			jumpDestinations.clear();
+
+			AddressSet blockSet = new AddressSet(block.getStart(), block.getEnd());
+
+			analyzeInstructions(program, blockSet);
+			processEntries(program, block);
+		}
+
 		return true;
 	}
 
@@ -69,7 +104,8 @@ public class InputArgsAnalyzer extends AbstractAnalyzer {
 			Reference[] references = program.getReferenceManager().getReferencesFrom(instr.getAddress());
 			if (references.length == 1) {
 				Address destination = references[0].getToAddress();
-				if (isValidJump(boundaryStart, destination, program, instr)) {
+
+				if (destination != null && isValidJump(boundaryStart, destination, program, instr)) {
 					jumpSources.put(destination, boundaryStart);
 					jumpDestinations.put(boundaryStart, instr.getAddress().add(1));
 					entries.add(destination);
@@ -84,7 +120,7 @@ public class InputArgsAnalyzer extends AbstractAnalyzer {
 				isCallPattern(program, boundaryStart, instr.getAddress().add(1));
 	}
 
-	private void processEntries(Program program) {
+	private void processEntries(Program program, MemoryBlock block) {
 		for (Address entry : entries) {
 			if (entry == null)
 				continue;
@@ -101,8 +137,8 @@ public class InputArgsAnalyzer extends AbstractAnalyzer {
 
 			AddressSet addressSet = new AddressSet(start, end);
 			int parameterCount = calculateInputParameters(program, addressSet, end);
-			if (parameterCount > 0)
-				defineFunction(program, entry, parameterCount);
+
+			defineFunction(program, entry, Math.max(0, parameterCount), block);
 		}
 	}
 
@@ -117,12 +153,14 @@ public class InputArgsAnalyzer extends AbstractAnalyzer {
 			String mnemonic = instr.getMnemonicString();
 
 			if (mnemonic.startsWith("PUSH")) {
-				int pushedAddressValue = (int) instr.getScalar(0).getValue();
-				int targetAddressValue = (int) targetAddress.getOffset();
+				if (instr.getScalar(0) != null) {
+					int pushedAddressValue = (int) instr.getScalar(0).getValue();
+					int targetAddressValue = (int) targetAddress.getOffset();
 
-				if (pushedAddressValue == targetAddressValue) {
-					processingInputs = true;
-					continue;
+					if (pushedAddressValue == targetAddressValue) {
+						processingInputs = true;
+						continue;
+					}
 				}
 			}
 
@@ -159,15 +197,36 @@ public class InputArgsAnalyzer extends AbstractAnalyzer {
 		return stackChange + swapInputs;
 	}
 
-	private void defineFunction(Program program, Address entry, int parameterCount) {
+	private void defineFunction(Program program, Address entry, int parameterCount, MemoryBlock block) {
 		try {
 			FunctionManager functionManager = program.getFunctionManager();
 			Function function = functionManager.getFunctionAt(entry);
+
+			String functionName = "func_" + entry.toString().replace(":", "_");
+			if (function == null) {
+				try {
+					function = functionManager.createFunction(functionName, entry, null, SourceType.USER_DEFINED);
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+
 			if (function != null) {
-				function.setName("FUNC_" + entry.toString(), SourceType.USER_DEFINED);
 				Parameter[] parameters = createParameters(program, parameterCount);
+
 				function.updateFunction(null, null, Function.FunctionUpdateType.CUSTOM_STORAGE, true,
 						SourceType.USER_DEFINED, parameters);
+
+				Uint256DataType returnType = new Uint256DataType();
+				function.setReturnType(returnType, SourceType.USER_DEFINED);
+
+				program.getFunctionManager().invalidateCache(true);
+
+				try {
+					program.flushEvents();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
 			}
 		} catch (DuplicateNameException | InvalidInputException e) {
 			e.printStackTrace();
@@ -177,9 +236,14 @@ public class InputArgsAnalyzer extends AbstractAnalyzer {
 	private Parameter[] createParameters(Program program, int count) throws InvalidInputException {
 		Parameter[] parameters = new Parameter[count];
 		Uint256DataType paramType = new Uint256DataType();
+
 		for (int i = 0; i < count; i++) {
-			VariableStorage storage = new VariableStorage(program, i * 32, 32);
-			parameters[i] = new ParameterImpl("param" + (i + 1), paramType, storage, program);
+			try {
+				VariableStorage storage = new VariableStorage(program, paramType.getLength(), i);
+				parameters[i] = new ParameterImpl("param" + (i + 1), paramType, storage, program);
+			} catch (Exception e) {
+				parameters[i] = new ParameterImpl("param" + (i + 1), paramType, program);
+			}
 		}
 		return parameters;
 	}
@@ -198,7 +262,9 @@ public class InputArgsAnalyzer extends AbstractAnalyzer {
 		while (instructions.hasNext()) {
 			Instruction instr = instructions.next();
 			String mnemonic = instr.getMnemonicString();
-			if (mnemonic.startsWith("PUSH") && instr.getScalar(0).getValue() == end.getOffset()) {
+
+			if (mnemonic.startsWith("PUSH") && instr.getScalar(0) != null &&
+					instr.getScalar(0).getValue() == end.getOffset()) {
 				return true;
 			}
 		}
