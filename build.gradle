@@ -63,6 +63,7 @@ dependencies {
 	implementation 'org.bitcoinj:bitcoinj-core:0.12'
 	implementation 'org.web3j:core:4.8.7'
 	implementation "com.github.grooviter:tablesaw-core:1.0.1"
+	implementation 'com.fifesoft:rsyntaxtextarea:3.6.0'
 }
 
 // Exclude additional files from the built extension

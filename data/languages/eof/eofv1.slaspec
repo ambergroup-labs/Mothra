@@ -1012,13 +1012,11 @@ sel16: selector is imm16        [ selector=(imm16+1)*0x10000; ] { export *[ram]:
 
 # EOF
 :SWAPN imm8 is op=0xe7; imm8 {
-	local p = SP + 4 * imm8;
-
-    pop(r1);
-	*[stk] p = r1;
-
-    r2 = *[stk] p;
-	push(r2);
+	local p = SP + 4 * imm8 + 4;
+    pop(r0);
+    r1 = *[stk] p;
+	*[stk] p = r0;
+	push(r1);
 }
 
 # EOF
@@ -1087,7 +1085,7 @@ define pcodeop _extcall;
 
 # EOF
 define pcodeop _extdelegatecall;
-:EXTDELEGATECALL is op=0xf {
+:EXTDELEGATECALL is op=0xf9 {
 	pop(r0);
 	pop(r1);
 	pop(r2);

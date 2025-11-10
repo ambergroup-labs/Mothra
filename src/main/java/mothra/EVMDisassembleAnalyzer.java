@@ -39,7 +39,7 @@ public class EVMDisassembleAnalyzer extends AbstractAnalyzer {
 
     private boolean isProcessorSupported(Processor processor) {
         return processor.equals(Processor.findOrPossiblyCreateProcessor(EVM_PROCESSOR)) ||
-            processor.equals(Processor.findOrPossiblyCreateProcessor(EOF_PROCESSOR));
+                processor.equals(Processor.findOrPossiblyCreateProcessor(EOF_PROCESSOR));
     }
 
     @Override
@@ -56,9 +56,8 @@ public class EVMDisassembleAnalyzer extends AbstractAnalyzer {
         AddressSet disSet = new AddressSet();
         if (isEOFProcessor(program)) {
             addExecutableBlocks(program, disSet);
-        }
-        else {
-            addCodeBlock(program, set, disSet);
+        } else {
+            addExecutableBlocks(program, disSet);
         }
         return disSet;
     }
@@ -67,7 +66,7 @@ public class EVMDisassembleAnalyzer extends AbstractAnalyzer {
         return program.getLanguage()
                 .getProcessor()
                 .equals(
-                    Processor.findOrPossiblyCreateProcessor(EOF_PROCESSOR));
+                        Processor.findOrPossiblyCreateProcessor(EOF_PROCESSOR));
     }
 
     private void addExecutableBlocks(Program program, AddressSet disSet) {
@@ -112,8 +111,7 @@ public class EVMDisassembleAnalyzer extends AbstractAnalyzer {
                     String actualValueInHex = bytesToHex(actualValueInBytes);
                     FlatProgramAPI flatAPI = new FlatProgramAPI(program);
                     flatAPI.setPreComment(instr.getAddress(), actualValueInHex);
-                }
-                catch (Exception e) {
+                } catch (Exception e) {
                     log.appendException(e);
                 }
             }
@@ -138,7 +136,7 @@ public class EVMDisassembleAnalyzer extends AbstractAnalyzer {
         try {
             // Get immediate value and max index
             int maxIndex = getMaxIndex(program, instr);
-            
+
             // Setup addresses and APIs
             Address jumpTableAddress = instr.getAddress().add(2);
             Address endAddress = jumpTableAddress.add((maxIndex + 1) * 2);
@@ -147,12 +145,11 @@ public class EVMDisassembleAnalyzer extends AbstractAnalyzer {
 
             // Initialize jump table
             initializeJumpTable(program, instr, endAddress, flatAPI, refManager, maxIndex);
-            
+
             // Process entries
-            processJumpTableEntries(program, instr, jumpTableAddress, endAddress, 
-                flatAPI, refManager, maxIndex, log);
-        }
-        catch (Exception e) {
+            processJumpTableEntries(program, instr, jumpTableAddress, endAddress,
+                    flatAPI, refManager, maxIndex, log);
+        } catch (Exception e) {
             log.appendException(e);
         }
     }
@@ -172,37 +169,35 @@ public class EVMDisassembleAnalyzer extends AbstractAnalyzer {
         byte[] immediateValueBytes = new byte[1];
         program.getMemory().getBytes(immediateValueAddress, immediateValueBytes);
         String immediateValueInHex = bytesToHex(immediateValueBytes);
-        
+
         flatAPI.setPreComment(instr.getAddress(), "Max Index: " + immediateValueInHex);
         refManager.addMemoryReference(
-            instr.getAddress(),
-            endAddress,
-            RefType.CONDITIONAL_JUMP,
-            SourceType.ANALYSIS,
-            0);
+                instr.getAddress(),
+                endAddress,
+                RefType.CONDITIONAL_JUMP,
+                SourceType.ANALYSIS,
+                0);
 
         // Clear existing data in jump table area
         Address jumpTableAddress = instr.getAddress().add(2);
         try {
             program.getListing().clearCodeUnits(jumpTableAddress, endAddress.subtract(1), false);
-        }
-        catch (Exception e) {
+        } catch (Exception e) {
             throw new Exception("Could not clear jump table area: " + e.getMessage());
         }
     }
 
-    private void processJumpTableEntries(Program program, Instruction instr, 
+    private void processJumpTableEntries(Program program, Instruction instr,
             Address jumpTableAddress, Address endAddress, FlatProgramAPI flatAPI,
             ReferenceManager refManager, int maxIndex, MessageLog log) {
         for (int i = 0; i <= maxIndex; i++) {
             Address currentAddress = jumpTableAddress.add(i * 2);
             try {
-                processJumpTableEntry(program, instr, currentAddress, endAddress, 
-                    flatAPI, refManager, i);
-            }
-            catch (Exception e) {
+                processJumpTableEntry(program, instr, currentAddress, endAddress,
+                        flatAPI, refManager, i);
+            } catch (Exception e) {
                 log.appendMsg("Warning: Could not process jump table entry at " +
-                    currentAddress + ": " + e.getMessage());
+                        currentAddress + ": " + e.getMessage());
             }
         }
     }
@@ -215,21 +210,21 @@ public class EVMDisassembleAnalyzer extends AbstractAnalyzer {
         program.getMemory().getBytes(currentAddress, jumpTableOffsetBytes);
         String jumpTableOffsetInHex = bytesToHex(jumpTableOffsetBytes);
         int rawValue = Integer.parseInt(jumpTableOffsetInHex.substring(2), 16);
-        short jumpTableOffset = (short)(rawValue & 0xFFFF);  // Ensure 16-bit signed value
+        short jumpTableOffset = (short) (rawValue & 0xFFFF); // Ensure 16-bit signed value
 
         // Create reference to destination
         Address destinationAddress = endAddress.add(jumpTableOffset);
         refManager.addMemoryReference(
-            instr.getAddress(),
-            destinationAddress,
-            RefType.CONDITIONAL_JUMP,
-            SourceType.DEFAULT,
-            0);
+                instr.getAddress(),
+                destinationAddress,
+                RefType.CONDITIONAL_JUMP,
+                SourceType.DEFAULT,
+                0);
 
         // Create word data and comment
         flatAPI.createWord(currentAddress);
         flatAPI.setEOLComment(currentAddress,
-            "Offset " + index + ": " + jumpTableOffsetInHex);
+                "Offset " + index + ": " + jumpTableOffsetInHex);
     }
 
     private int extractMnemonicSuffix(String mnemonic, String prefix) {
@@ -238,8 +233,7 @@ public class EVMDisassembleAnalyzer extends AbstractAnalyzer {
         try {
             String suffix = mnemonic.substring(prefix.length());
             return Integer.parseInt(suffix);
-        }
-        catch (NumberFormatException e) {
+        } catch (NumberFormatException e) {
             return -1;
         }
     }
