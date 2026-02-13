@@ -31,10 +31,11 @@ import mothra.util.MothraLog;
  */
 public class CacheManager {
 
-    private static final String CACHE_DIR = "/tmp/eth-trace-cache";
-    private static final String CALL_TRACE_DIR = CACHE_DIR + "/call-traces";
-    private static final String INSTRUCTION_TRACE_DIR = CACHE_DIR + "/instruction-traces";
-    private static final String BYTECODE_DIR = CACHE_DIR + "/bytecode";
+    private static final String CACHE_DIR =
+            Paths.get(System.getProperty("java.io.tmpdir"), "eth-trace-cache").toString();
+    private static final String CALL_TRACE_DIR = Paths.get(CACHE_DIR, "call-traces").toString();
+    private static final String INSTRUCTION_TRACE_DIR = Paths.get(CACHE_DIR, "instruction-traces").toString();
+    private static final String BYTECODE_DIR = Paths.get(CACHE_DIR, "bytecode").toString();
 
     /**
      * Initialize cache directories
