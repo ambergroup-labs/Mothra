@@ -12,6 +12,7 @@ import ghidra.framework.plugintool.util.PluginStatus;
 import ghidra.program.util.ProgramLocation;
 import ghidra.program.util.ProgramSelection;
 import ghidra.util.HelpLocation;
+import mothra.util.MothraLog;
 
 //@formatter:off
 @PluginInfo(
@@ -96,7 +97,7 @@ public class SourceCodePlugin extends ProgramPlugin {
 
         // Refresh the provider when the program changes
         if (provider != null) {
-            System.out.println(
+            MothraLog.info(this, 
                     "DEBUG: SourceCodePlugin - program activated: " + (program != null ? program.getName() : "null"));
             provider.initializeDisplay();
         }

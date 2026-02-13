@@ -12,6 +12,7 @@ import ghidra.framework.plugintool.util.PluginStatus;
 import ghidra.program.util.ProgramLocation;
 import ghidra.program.util.ProgramSelection;
 import ghidra.util.HelpLocation;
+import mothra.util.MothraLog;
 
 //@formatter:off
 @PluginInfo(
@@ -37,7 +38,7 @@ public class TraceViewerPlugin extends ProgramPlugin {
             buildShowWindowAction();
 
         } catch (Exception e) {
-            System.err.println("ERROR: Failed to initialize TraceViewerPlugin: " + e.getMessage());
+            MothraLog.error(this, "ERROR: Failed to initialize TraceViewerPlugin: " + e.getMessage());
             e.printStackTrace();
         }
     }

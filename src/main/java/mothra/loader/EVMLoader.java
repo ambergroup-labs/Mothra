@@ -24,6 +24,7 @@ import ghidra.app.util.Option;
 import ghidra.app.util.bin.ByteProvider;
 import ghidra.app.util.importer.MessageLog;
 import ghidra.app.util.opinion.AbstractProgramWrapperLoader;
+import ghidra.app.util.opinion.Loader.ImporterSettings;
 import ghidra.app.util.opinion.LoadSpec;
 import ghidra.framework.model.DomainObject;
 import ghidra.framework.options.Options;
@@ -41,7 +42,6 @@ public class EVMLoader extends AbstractProgramWrapperLoader {
 
 	private static final int CONTRACT_SIZE_LIMIT = 0x6000;
 	private static final int HEX_CONTRACT_SIZE_LIMIT = CONTRACT_SIZE_LIMIT * 2;
-	private static final String EOF_MAGIC_PREFIX = "ef00";
 
 	private boolean isHexCode = false;
 
@@ -56,7 +56,7 @@ public class EVMLoader extends AbstractProgramWrapperLoader {
 		String content = decodeToString(data);
 		this.isHexCode = isHexFormatted(content);
 
-		if (isValidContractSize(provider) && !isEOF(content)) {
+		if (isValidContractSize(provider)) {
 			LanguageCompilerSpecPair pair =
 				new LanguageCompilerSpecPair("evm:256:default", "default");
 			return List.of(new LoadSpec(this, 0, pair, true));
@@ -65,9 +65,12 @@ public class EVMLoader extends AbstractProgramWrapperLoader {
 	}
 
 	@Override
-	protected void load(ByteProvider provider, LoadSpec loadSpec, List<Option> options,
-			Program program, TaskMonitor monitor, MessageLog log)
+	protected void load(Program program, ImporterSettings settings)
 			throws CancelledException, IOException {
+
+		TaskMonitor monitor = settings.monitor();
+		MessageLog log = settings.log();
+		ByteProvider provider = settings.provider();
 
 		monitor.setMessage("EVM: Start Loading...");
 		FlatProgramAPI api = new FlatProgramAPI(program);
@@ -148,10 +151,6 @@ public class EVMLoader extends AbstractProgramWrapperLoader {
 	 *   Format Helpers
 	 * ==================== */
 
-	private boolean isEOF(String input) {
-		return input.length() >= 4 && input.toLowerCase().startsWith(EOF_MAGIC_PREFIX);
-	}
-
 	private boolean isHexFormatted(String input) {
 		return input.matches("^[0-9a-fA-F]+$");
 	}
@@ -184,8 +183,8 @@ public class EVMLoader extends AbstractProgramWrapperLoader {
 
 	@Override
 	public List<Option> getDefaultOptions(ByteProvider provider, LoadSpec loadSpec,
-			DomainObject domainObject, boolean isLoadIntoProgram) {
-		return super.getDefaultOptions(provider, loadSpec, domainObject, isLoadIntoProgram);
+			DomainObject domainObject, boolean isLoadIntoProgram, boolean mirrorFsLayout) {
+		return super.getDefaultOptions(provider, loadSpec, domainObject, isLoadIntoProgram, mirrorFsLayout);
 	}
 
 	@Override

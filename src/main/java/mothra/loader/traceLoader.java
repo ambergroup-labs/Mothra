@@ -21,6 +21,7 @@ import ghidra.app.util.Option;
 import ghidra.app.util.bin.ByteProvider;
 import ghidra.app.util.importer.MessageLog;
 import ghidra.app.util.opinion.AbstractProgramWrapperLoader;
+import ghidra.app.util.opinion.Loader.ImporterSettings;
 import ghidra.app.util.opinion.LoadSpec;
 import ghidra.framework.model.DomainObject;
 import ghidra.program.database.ProgramDB;
@@ -33,29 +34,27 @@ import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
 import mothra.evm.CborDecoder;
 import mothra.evm.MetadataObj;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
+import mothra.trace.data.DataStore;
+import mothra.util.MothraLog;
 import ghidra.util.Msg;
 
-public class traceLoader extends AbstractProgramWrapperLoader {
+public class TraceLoader extends AbstractProgramWrapperLoader {
 
-    private static final String RPC_URL = "https://home.sui.fund:8443/rpc/d712135b-47c1-4dab-ad0a-1570fb8661fe";
-    private static final OkHttpClient CLIENT = new OkHttpClient();
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final MediaType JSON_MEDIA = MediaType.parse("application/json; charset=utf-8");
-
     private static final long CONTRACT_SPACING = 0x10000L;
 
-    private static class ContractData {
-        final String contractAddress, contractCode;
+    private DataStore dataStore;
 
-        ContractData(String address, String code) {
-            contractAddress = address;
-            contractCode = code;
-        }
+    public TraceLoader() {
+        this.dataStore = null;
+    }
+
+    public TraceLoader(DataStore dataStore) {
+        this.dataStore = dataStore;
+    }
+
+    public void setDataStore(DataStore dataStore) {
+        this.dataStore = dataStore;
     }
 
     @Override
@@ -70,47 +69,114 @@ public class traceLoader extends AbstractProgramWrapperLoader {
     }
 
     @Override
-    protected void load(ByteProvider provider, LoadSpec spec, List<Option> opts,
-            Program program, TaskMonitor mon, MessageLog log)
+    protected void load(Program program, ImporterSettings settings)
+            throws CancelledException, IOException {
+
+        TaskMonitor mon = settings.monitor();
+        MessageLog log = settings.log();
+
+        // Verify DataStore is set
+        if (dataStore == null) {
+            throw new IOException("DataStore not set. Call setDataStore() before load().");
+        }
+
+        mon.initialize(dataStore.getContractList().size() + 1);
+
+        // Deploy contracts from DataStore
+        deployContractsFromDataStore(program, mon, log);
+
+        // Store trace data in DB tables
+        storeTraceDataInTables(program, mon);
+
+        mon.incrementProgress(1);
+        mon.setMessage("TraceLoader: done.");
+    }
+
+    private void deployContractsFromDataStore(Program program,
+                                              TaskMonitor mon,
+                                              MessageLog log)
             throws CancelledException, IOException {
 
         FlatProgramAPI api = new FlatProgramAPI(program, mon);
-        byte[] hashBytes = provider.readBytes(0, provider.length());
 
-        String txHash = ensure0x(bytesToHex(hashBytes));
-
-        List<ContractData> contracts = fetchContracts(txHash);
-        System.out.println("=== DEBUG: fetchContracts returned " + contracts.size() + " contracts ===");
-
-        mon.initialize(contracts.size() + 1);
+        List<String> contracts = dataStore.getContractList();
+        Map<String, String> bytecodeMap = dataStore.getContractBytecode();
+        Map<String, Long> deploymentAddresses = dataStore.getContractDeploymentAddresses();
 
         long offset = 0;
-        for (ContractData c : contracts) {
-            if (mon.isCancelled())
+        for (String contractAddress : contracts) {
+            if (mon.isCancelled()) {
                 throw new CancelledException();
+            }
 
-            System.out.println("=== DEBUG: Processing contract " + c.contractAddress + " at offset " + offset + " ===");
-            loadContract(api, program, c.contractAddress, hexToBytes(strip0x(c.contractCode)),
-                    offset, log);
+            String bytecodeHex = bytecodeMap.get(contractAddress);
+            if (bytecodeHex == null || bytecodeHex.isEmpty()) {
+                log.appendMsg("Skip contract (no bytecode): " + contractAddress);
+                continue;
+            }
 
+            byte[] bytecode = hexToBytes(strip0x(bytecodeHex));
+
+            Long deploymentAddr = deploymentAddresses.get(contractAddress);
+            if (deploymentAddr != null) {
+                offset = deploymentAddr;
+            }
+
+            MothraLog.info(this, "Loading contract " + contractAddress + " at offset 0x" +
+                             Long.toHexString(offset));
+
+            loadContract(api, program, contractAddress, bytecode, offset, log);
             mon.incrementProgress(1);
+            storeContractInfo((ProgramDB) program, contractAddress, offset, log);
 
-            System.out.println("=== DEBUG: About to store contract info for " + c.contractAddress + " ===");
-            storeContractInfo((ProgramDB) program, c.contractAddress, offset, log);
-            System.out.println("=== DEBUG: Contract info stored successfully ===");
             offset += CONTRACT_SPACING;
         }
+    }
 
-        List<Map<String, Object>> logsList = fetchStructLogs(txHash);
-        storeStructLogs((ProgramDB) program, logsList);
+    private void storeTraceDataInTables(Program program, TaskMonitor mon)
+            throws IOException, CancelledException {
+        // Store instruction steps from DataStore
+        List<DataStore.InstructionStep> steps = dataStore.getInstructionSteps();
+        List<Map<String, Object>> structLogsForTable = convertInstructionStepsToStructLogs(steps);
+        storeStructLogs((ProgramDB) program, structLogsForTable, mon);
 
-        // Also store call tracer data
-        Map<String, Object> callTraceData = fetchCallTracerData(txHash);
-        if (callTraceData != null) {
+        if (mon.isCancelled()) {
+            throw new CancelledException();
+        }
+
+        // Store call tracer data
+        String callTracerJson = dataStore.getCallTracerData();
+        if (callTracerJson != null) {
+            Map<String, Object> callTraceData = parseCallTracerJson(callTracerJson);
             storeCallTracerData((ProgramDB) program, callTraceData);
         }
-        mon.incrementProgress(1);
-        mon.setMessage("TraceLoader: done.");
+    }
+
+    private List<Map<String, Object>> convertInstructionStepsToStructLogs(
+            List<DataStore.InstructionStep> steps) {
+
+        List<Map<String, Object>> logs = new ArrayList<>();
+
+        for (DataStore.InstructionStep step : steps) {
+            Map<String, Object> log = new java.util.HashMap<>();
+            log.put("pc", (int) step.pc);
+            log.put("op", step.op);
+            log.put("gas", (int) step.gas);
+            log.put("gasCost", (int) step.gasCost);
+            log.put("depth", step.depth);
+            log.put("stack", step.stack);
+            logs.add(log);
+        }
+
+        return logs;
+    }
+
+    private Map<String, Object> parseCallTracerJson(String json) throws IOException {
+        com.fasterxml.jackson.databind.JsonNode root = JSON.readTree(json);
+        com.fasterxml.jackson.databind.JsonNode result = root.has("result") ? root.get("result") : root;
+        @SuppressWarnings("unchecked")
+        Map<String, Object> resultMap = JSON.convertValue(result, Map.class);
+        return resultMap;
     }
 
     private void loadContract(FlatProgramAPI api, Program prog,
@@ -139,7 +205,7 @@ public class traceLoader extends AbstractProgramWrapperLoader {
         }
 
         api.disassemble(addr);
-        api.addEntryPoint(addr);
+        //api.addEntryPoint(addr);
 
         decodeAndAnnotateMetadata(api, bytes, base, log);
     }
@@ -181,95 +247,6 @@ public class traceLoader extends AbstractProgramWrapperLoader {
         }
     }
 
-    private Map<String, Object> rpc(String method, Object params) throws IOException {
-        Map<String, Object> req = Map.of("jsonrpc", "2.0", "id", 1,
-                "method", method, "params", params);
-
-        RequestBody b = RequestBody.create(JSON.writeValueAsString(req), JSON_MEDIA);
-        Request r = new Request.Builder().url(RPC_URL).post(b).build();
-
-        try (Response res = CLIENT.newCall(r).execute()) {
-            if (!res.isSuccessful()) {
-                String errorBody = res.body() != null ? res.body().string() : "No response body";
-                System.err.println("ERROR: RPC call failed with HTTP " + res.code() + ": " + errorBody);
-                throw new IOException(method + " HTTP " + res.code() + ": " + errorBody);
-            }
-
-            String responseBody = res.body().string();
-            Map<String, Object> result = JSON.readValue(responseBody, Map.class);
-            return result;
-        }
-    }
-
-    private List<ContractData> fetchContracts(String txHash) throws IOException {
-        Map<String, Object> callTrace = rpc("debug_traceTransaction",
-                List.of(txHash, Map.of("tracer", "callTracer")));
-
-        if (callTrace == null || !callTrace.containsKey("result")) {
-            System.err.println("ERROR: callTrace is null or missing 'result' field");
-            throw new IOException("Failed to fetch call trace data for transaction: " + txHash);
-        }
-
-        Map<String, Object> result = (Map<String, Object>) callTrace.get("result");
-        if (result == null || !result.containsKey("to")) {
-            System.err.println("ERROR: result is null or missing 'to' field");
-            throw new IOException("Invalid call trace result for transaction: " + txHash);
-        }
-
-        String rootAddr = result.get("to").toString().toLowerCase();
-
-        Map<String, Object> prestateTrace = rpc("debug_traceTransaction",
-                List.of(txHash, Map.of("tracer", "prestateTracer")));
-
-        if (prestateTrace == null || !prestateTrace.containsKey("result")) {
-            System.err.println("ERROR: prestateTrace is null or missing 'result' field");
-            throw new IOException("Failed to fetch prestate trace data for transaction: " + txHash);
-        }
-
-        Map<String, Object> accounts = (Map<String, Object>) prestateTrace.get("result");
-
-        List<ContractData> contracts = new ArrayList<>();
-        System.out.println("=== DEBUG: Processing " + accounts.size() + " accounts from prestateTracer ===");
-        for (var entry : accounts.entrySet()) {
-            String addr = entry.getKey().toLowerCase();
-            Map<String, Object> account = (Map<String, Object>) entry.getValue();
-            String code = (String) account.get("code");
-
-            System.out.println("=== DEBUG: Account " + addr + " has code length: "
-                    + (code != null ? code.length() : "null") + " ===");
-
-            if (code != null && !code.equals("0x") && !code.isEmpty()) {
-                System.out
-                        .println("=== DEBUG: Adding contract " + addr + " with code length " + code.length() + " ===");
-                contracts.add(new ContractData(addr, code));
-            }
-        }
-
-        System.out.println("=== DEBUG: Found " + contracts.size() + " contracts with code ===");
-        contracts.sort((a, b) -> a.contractAddress.equals(rootAddr) ? -1 : b.contractAddress.equals(rootAddr) ? 1 : 0);
-        return contracts;
-    }
-
-    @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> fetchStructLogs(String txHash) throws IOException {
-        Map<String, Object> trace = rpc("debug_traceTransaction",
-                List.of(txHash, Collections.emptyMap()));
-        return (List<Map<String, Object>>) ((Map<String, Object>) trace.get("result")).getOrDefault("structLogs",
-                List.of());
-    }
-
-    private Map<String, Object> fetchCallTracerData(String txHash) throws IOException {
-        Map<String, Object> callTrace = rpc("debug_traceTransaction",
-                List.of(txHash, Map.of("tracer", "callTracer")));
-
-        if (callTrace == null || !callTrace.containsKey("result")) {
-            System.err.println("ERROR: callTracer is null or missing 'result' field");
-            return null;
-        }
-
-        return (Map<String, Object>) callTrace.get("result");
-    }
-
     private static class StructLogAdapter {
         private static final int VER = 1;
         private static final Schema SCHEMA = new Schema(VER, "ID",
@@ -301,13 +278,21 @@ public class traceLoader extends AbstractProgramWrapperLoader {
     }
 
     private void storeStructLogs(ProgramDB prog,
-            List<Map<String, Object>> logs) throws IOException {
+            List<Map<String, Object>> logs, TaskMonitor mon)
+            throws IOException, CancelledException {
         DBHandle db = prog.getDBHandle();
         int tx = prog.startTransaction("StructLogs");
         try {
             StructLogAdapter adapter = new StructLogAdapter(db, db.getTable("StructLogs") == null);
-            for (Map<String, Object> log : logs) {
-                adapter.put(log);
+            int total = logs.size();
+            for (int i = 0; i < total; i++) {
+                if (i % 1000 == 0) {
+                    if (mon.isCancelled()) {
+                        throw new CancelledException();
+                    }
+                    mon.setMessage("Storing struct logs: " + i + "/" + total);
+                }
+                adapter.put(logs.get(i));
             }
         } finally {
             prog.endTransaction(tx, true);
@@ -398,20 +383,20 @@ public class traceLoader extends AbstractProgramWrapperLoader {
         }
 
         void put(String contractAddress, long baseOffset, String memoryBlockName) throws IOException {
-            System.out.println("=== DEBUG: ContractInfoAdapter.put called ===");
+            MothraLog.debug(this, "=== DEBUG: ContractInfoAdapter.put called ===");
             DBRecord r = SCHEMA.createRecord(tbl.getKey());
             r.setString(0, contractAddress);
             r.setLongValue(1, baseOffset);
             r.setString(2, memoryBlockName);
             tbl.putRecord(r);
-            System.out.println(
+            MothraLog.debug(this, 
                     "=== DEBUG: Record added to table, table now has " + tbl.getRecordCount() + " records ===");
         }
 
     }
 
     private void storeContractInfo(ProgramDB prog, String contractAddress, long baseOffset, MessageLog log) {
-        System.out.println(
+        MothraLog.debug(this, 
                 "=== DEBUG: storeContractInfo called for " + contractAddress + " at offset " + baseOffset + " ===");
         try {
             DBHandle db = prog.getDBHandle();
@@ -420,16 +405,16 @@ public class traceLoader extends AbstractProgramWrapperLoader {
                 ContractInfoAdapter adapter = new ContractInfoAdapter(db, db.getTable("ContractInfo") == null);
                 String memoryBlockName = formatContractName(contractAddress);
 
-                System.out.println("=== DEBUG: About to store record in ContractInfo table ===");
+                MothraLog.debug(this, "=== DEBUG: About to store record in ContractInfo table ===");
                 adapter.put(contractAddress, baseOffset, memoryBlockName);
-                System.out.println("=== DEBUG: Record stored successfully ===");
+                MothraLog.debug(this, "=== DEBUG: Record stored successfully ===");
 
             } finally {
                 prog.endTransaction(tx, true);
-                System.out.println("=== DEBUG: Transaction committed ===");
+                MothraLog.debug(this, "=== DEBUG: Transaction committed ===");
             }
         } catch (IOException e) {
-            System.err.println("=== DEBUG: Exception in storeContractInfo: " + e.getMessage() + " ===");
+            MothraLog.error(this, "=== DEBUG: Exception in storeContractInfo: " + e.getMessage() + " ===");
             log.appendException(e);
             log.appendMsg("Failed to store contract info for " + contractAddress);
         }
@@ -478,8 +463,8 @@ public class traceLoader extends AbstractProgramWrapperLoader {
 
     @Override
     public List<Option> getDefaultOptions(ByteProvider p, LoadSpec l,
-            DomainObject d, boolean inProg) {
-        return super.getDefaultOptions(p, l, d, inProg);
+            DomainObject d, boolean inProg, boolean mirrorFsLayout) {
+        return super.getDefaultOptions(p, l, d, inProg, mirrorFsLayout);
     }
 
     @Override

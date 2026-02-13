@@ -57,13 +57,15 @@ repositories {
 
 dependencies {
 	// Any external dependencies added here will automatically be copied to the lib/ directory when
-	// this extension is built.	
+	// this extension is built.
 	// https://mvnrepository.com/artifact/com.fasterxml.jackson.dataformat/jackson-dataformats-cbor
 	implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-cbor:2.17.2'
 	implementation 'org.bitcoinj:bitcoinj-core:0.12'
 	implementation 'org.web3j:core:4.8.7'
 	implementation "com.github.grooviter:tablesaw-core:1.0.1"
 	implementation 'com.fifesoft:rsyntaxtextarea:3.6.0'
+	// Added for DataStore JSON parsing (eth-trace-generator integration)
+	implementation 'com.google.code.gson:gson:2.10.1'
 }
 
 // Exclude additional files from the built extension

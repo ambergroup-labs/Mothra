@@ -32,6 +32,7 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Program;
 import ghidra.program.util.ProgramLocation;
 import ghidra.program.util.ProgramSelection;
+import mothra.util.MothraLog;
 
 public class TraceViewerProvider extends ComponentProviderAdapter {
 
@@ -165,7 +166,7 @@ public class TraceViewerProvider extends ComponentProviderAdapter {
                 return true;
             }
         } catch (Exception e) {
-            System.err.println("Error loading trace from database: " + e.getMessage());
+            MothraLog.error(this, "Error loading trace from database: " + e.getMessage());
             e.printStackTrace();
         }
 
@@ -205,7 +206,7 @@ public class TraceViewerProvider extends ComponentProviderAdapter {
             }
 
         } catch (Exception e) {
-            System.err.println("Error loading trace from files: " + e.getMessage());
+            MothraLog.error(this, "Error loading trace from files: " + e.getMessage());
             e.printStackTrace();
         }
 
@@ -228,7 +229,7 @@ public class TraceViewerProvider extends ComponentProviderAdapter {
             return JSON_MAPPER.convertValue(rootNode, Map.class);
 
         } catch (Exception e) {
-            System.err.println("Error reading trace.json: " + e.getMessage());
+            MothraLog.error(this, "Error reading trace.json: " + e.getMessage());
             return null;
         }
     }
@@ -247,7 +248,7 @@ public class TraceViewerProvider extends ComponentProviderAdapter {
             return JSON_MAPPER.convertValue(rootNode, Map.class);
 
         } catch (Exception e) {
-            System.err.println("Error reading traceTransaction.json: " + e.getMessage());
+            MothraLog.error(this, "Error reading traceTransaction.json: " + e.getMessage());
             return null;
         }
     }
@@ -302,7 +303,7 @@ public class TraceViewerProvider extends ComponentProviderAdapter {
             return callTracerData;
 
         } catch (Exception e) {
-            System.err.println("Error loading call tracer from database: " + e.getMessage());
+            MothraLog.error(this, "Error loading call tracer from database: " + e.getMessage());
             e.printStackTrace();
             return null;
         }
@@ -341,7 +342,7 @@ public class TraceViewerProvider extends ComponentProviderAdapter {
                         structLogs.add(logEntry);
                     }
                 } catch (Exception e) {
-                    System.err.println("Error reading record " + i + ": " + e.getMessage());
+                    MothraLog.error(this, "Error reading record " + i + ": " + e.getMessage());
                 }
             }
 
@@ -357,7 +358,7 @@ public class TraceViewerProvider extends ComponentProviderAdapter {
             return result;
 
         } catch (Exception e) {
-            System.err.println("Error loading from database table: " + e.getMessage());
+            MothraLog.error(this, "Error loading from database table: " + e.getMessage());
             e.printStackTrace();
             return null;
         }
@@ -367,7 +368,7 @@ public class TraceViewerProvider extends ComponentProviderAdapter {
         try {
             java.io.File jsonFile = new java.io.File("ghidra_scripts/callTracer.json");
             if (!jsonFile.exists()) {
-                System.err.println("callTracer.json not found at: " + jsonFile.getAbsolutePath());
+                MothraLog.error(this, "callTracer.json not found at: " + jsonFile.getAbsolutePath());
                 return null;
             }
 
@@ -376,14 +377,14 @@ public class TraceViewerProvider extends ComponentProviderAdapter {
 
             JsonNode resultNode = rootNode.get("result");
             if (resultNode == null) {
-                System.err.println("No 'result' field found in callTracer.json");
+                MothraLog.error(this, "No 'result' field found in callTracer.json");
                 return null;
             }
 
             return JSON_MAPPER.convertValue(resultNode, Map.class);
 
         } catch (Exception e) {
-            System.err.println("Error reading callTracer.json: " + e.getMessage());
+            MothraLog.error(this, "Error reading callTracer.json: " + e.getMessage());
             e.printStackTrace();
             return null;
         }

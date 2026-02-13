@@ -10,8 +10,14 @@
 ## @provides:ghidra.app.plugin.ProgramPlugin
 ## @description:Simple and Clean EVM Trace Viewer
 
+## @category:DEBUGGER
+## @key:EvmStatePlugin
+## @package:mothra.loader
+## @provides:ghidra.framework.plugintool.Plugin
+## @description:EVM State Viewer for Debugger (calldata, memory, stack, storage)
+
 ## @category:LOADERS
-## @key:traceLoader
+## @key:TraceLoader
 ## @package:mothra.loader
 ## @provides:ghidra.app.util.opinion.Loader
 ## @description:EVM Transaction Trace Loader
