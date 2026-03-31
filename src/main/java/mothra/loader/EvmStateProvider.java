@@ -114,7 +114,7 @@ public class EvmStateProvider extends ComponentProviderAdapter {
 
     private JPanel createCalldataPanel() {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBorder(new TitledBorder("Calldata (0x40000000)"));
+        panel.setBorder(new TitledBorder("Calldata"));
 
         calldataArea = new JTextArea();
         calldataArea.setEditable(false);
@@ -132,7 +132,7 @@ public class EvmStateProvider extends ComponentProviderAdapter {
 
     private JPanel createMemoryPanel() {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBorder(new TitledBorder("Memory (0x50000000)"));
+        panel.setBorder(new TitledBorder("Memory"));
 
         memoryArea = new JTextArea();
         memoryArea.setEditable(false);
@@ -150,7 +150,7 @@ public class EvmStateProvider extends ComponentProviderAdapter {
 
     private JPanel createStackPanel() {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBorder(new TitledBorder("Stack (0x60000000)"));
+        panel.setBorder(new TitledBorder("Stack"));
 
         stackArea = new JTextArea();
         stackArea.setEditable(false);
@@ -167,7 +167,7 @@ public class EvmStateProvider extends ComponentProviderAdapter {
 
     private JPanel createStoragePanel() {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBorder(new TitledBorder("Storage (0x70000000)"));
+        panel.setBorder(new TitledBorder("Storage"));
 
         storageArea = new JTextArea();
         storageArea.setEditable(false);

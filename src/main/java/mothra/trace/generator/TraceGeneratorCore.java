@@ -20,6 +20,7 @@ import java.math.BigInteger;
 import java.nio.ByteBuffer;
 
 import java.util.*;
+import java.util.Objects;
 
 import db.Transaction;
 import ghidra.framework.model.Project;
@@ -218,16 +219,17 @@ public class TraceGeneratorCore {
 
         // Write initial calldata to RAM
         MothraLog.info(this, "  → Writing initial calldata...");
+        TraceMemoryManager memMgr = builder.trace.getMemoryManager();
         String initialCallData = contractMgr.getCurrentCallData();
         if (initialCallData != null) {
-            writeCalldataToMemory(builder, snapKey, initialCallData);
+            writeCalldataToMemory(memMgr, ramSpace, snapKey, initialCallData);
         }
 
         // Write empty EVM execution data for initial state
-        writeEvmMemoryToRam(builder, snapKey, null);
-        writeEvmStackToRam(builder, snapKey, null);
-        writeStorageToRam(builder, snapKey, null);
-        writeGasInfoToRam(builder, snapKey, 0, 0);  // Initial gas values
+        writeEvmMemoryToRam(memMgr, ramSpace, snapKey, null);
+        writeEvmStackToRam(memMgr, ramSpace, snapKey, null);
+        writeStorageToRam(memMgr, ramSpace, snapKey, null);
+        writeGasInfoToRam(memMgr, ramSpace, snapKey, 0, 0);  // Initial gas values
 
         MothraLog.info(this, "  ✓ Snapshot 0 created");
         return thread;
@@ -245,7 +247,7 @@ public class TraceGeneratorCore {
         }
 
         Address codeStart = codeSpace.getAddress(0x00000000L);
-        Address codeEnd = codeSpace.getAddress(0xFFFFFFFFL);
+        Address codeEnd = codeSpace.getAddress(0x3FFFFFFFL);
         memMgr.addRegion("Memory[code]", zeroOn, new AddressRangeImpl(codeStart, codeEnd),
                         Set.of(TraceMemoryFlag.READ, TraceMemoryFlag.EXECUTE));
 
@@ -253,6 +255,30 @@ public class TraceGeneratorCore {
         Address stkStart = stkSpace.getAddress(0x0000L);
         Address stkEnd = stkSpace.getAddress(0x20000);
         memMgr.addRegion("Memory[stack]", zeroOn, new AddressRangeImpl(stkStart, stkEnd),
+                        Set.of(TraceMemoryFlag.READ, TraceMemoryFlag.WRITE));
+
+        // Calldata region at 0x40000000 (4 bytes length + up to ~64KB data)
+        Address calldataStart = codeSpace.getAddress(CALLDATA_BASE);
+        Address calldataEnd = codeSpace.getAddress(CALLDATA_BASE + 0x10000L - 1);
+        memMgr.addRegion("Memory[calldata]", zeroOn, new AddressRangeImpl(calldataStart, calldataEnd),
+                        Set.of(TraceMemoryFlag.READ, TraceMemoryFlag.WRITE));
+
+        // EVM memory region at 0x50000000 (4 bytes length + data)
+        Address evmMemStart = codeSpace.getAddress(EVM_MEMORY_BASE);
+        Address evmMemEnd = codeSpace.getAddress(EVM_MEMORY_BASE + 0x100000L - 1);
+        memMgr.addRegion("Memory[memory]", zeroOn, new AddressRangeImpl(evmMemStart, evmMemEnd),
+                        Set.of(TraceMemoryFlag.READ, TraceMemoryFlag.WRITE));
+
+        // Storage region at 0x70000000 (4 bytes length + key-value pairs * 64 bytes)
+        Address storageStart = codeSpace.getAddress(STORAGE_BASE);
+        Address storageEnd = codeSpace.getAddress(STORAGE_BASE + 0x100000L - 1);
+        memMgr.addRegion("Memory[storage]", zeroOn, new AddressRangeImpl(storageStart, storageEnd),
+                        Set.of(TraceMemoryFlag.READ, TraceMemoryFlag.WRITE));
+
+        // Gas info region at 0x80000000 (8 bytes: 4 for gas + 4 for gasCost)
+        Address gasStart = codeSpace.getAddress(GAS_BASE);
+        Address gasEnd = codeSpace.getAddress(GAS_BASE + 0x100L - 1);
+        memMgr.addRegion("Memory[gas]", zeroOn, new AddressRangeImpl(gasStart, gasEnd),
                         Set.of(TraceMemoryFlag.READ, TraceMemoryFlag.WRITE));
     }
 
@@ -350,6 +376,20 @@ public class TraceGeneratorCore {
             currentCodeAddress = 0L;
         }
 
+        // Cache frequently accessed objects outside the loop
+        TraceMemoryManager memMgr = builder.trace.getMemoryManager();
+        TraceMemorySpace memSpace = memMgr.getMemoryRegisterSpace(thread, 0, true);
+        AddressSpace ramSpace = builder.language.getAddressFactory().getAddressSpace("ram");
+        AddressSpace stkSpace = builder.language.getAddressFactory().getAddressSpace("stk");
+
+        // Track previous values to skip unchanged writes
+        String prevMemory = null;
+        List<String> prevEvmStack = null;
+        Map<String, String> prevStorage = null;
+        String prevCallData = null;
+        long prevGas = -1;
+        long prevGasCost = -1;
+
         // Track start time for ETA calculation
         long startTime = System.currentTimeMillis();
 
@@ -417,10 +457,7 @@ public class TraceGeneratorCore {
             // Set the event thread for the snapshot (for Time window display)
             snapshot.setEventThread(thread);
 
-            // Set register values
-            TraceMemoryManager memMgr = builder.trace.getMemoryManager();
-            TraceMemorySpace memSpace = memMgr.getMemoryRegisterSpace(thread, 0, true);
-
+            // Set register values (using cached memMgr and memSpace)
             setRegister(memSpace, builder.language, snapKey, "PC", currentPc);
             setRegister(memSpace, builder.language, snapKey, "SP", currentSp);
 
@@ -440,26 +477,40 @@ public class TraceGeneratorCore {
             }
 
             // Write stack to memory
-            writeStackToMemory(builder, snapKey, prevSp, currentSp, stack);
+            writeStackToMemory(memMgr, stkSpace, snapKey, prevSp, currentSp, stack);
 
-            // Write EVM execution data to RAM regions
+            // Write EVM execution data to RAM regions (skip unchanged data)
             // Calldata at 0x40000000
             String currentCallData = contractMgr.getCurrentCallData();
-            if (currentCallData != null) {
-                writeCalldataToMemory(builder, snapKey, currentCallData);
+            if (currentCallData != null && !Objects.equals(currentCallData, prevCallData)) {
+                writeCalldataToMemory(memMgr, ramSpace, snapKey, currentCallData);
+                prevCallData = currentCallData;
             }
 
             // EVM memory at 0x50000000
-            writeEvmMemoryToRam(builder, snapKey, step.memory);
+            if (!Objects.equals(step.memory, prevMemory)) {
+                writeEvmMemoryToRam(memMgr, ramSpace, snapKey, step.memory);
+                prevMemory = step.memory;
+            }
 
             // EVM stack at 0x60000000
-            writeEvmStackToRam(builder, snapKey, step.stack);
+            if (!Objects.equals(step.stack, prevEvmStack)) {
+                writeEvmStackToRam(memMgr, ramSpace, snapKey, step.stack);
+                prevEvmStack = step.stack != null ? new ArrayList<>(step.stack) : null;
+            }
 
             // Storage at 0x70000000
-            writeStorageToRam(builder, snapKey, step.storage);
+            if (!Objects.equals(step.storage, prevStorage)) {
+                writeStorageToRam(memMgr, ramSpace, snapKey, step.storage);
+                prevStorage = step.storage != null ? new HashMap<>(step.storage) : null;
+            }
 
             // Gas info at 0x80000000 (gas) and 0x80000004 (gasCost)
-            writeGasInfoToRam(builder, snapKey, step.gas, step.gasCost);
+            if (step.gas != prevGas || step.gasCost != prevGasCost) {
+                writeGasInfoToRam(memMgr, ramSpace, snapKey, step.gas, step.gasCost);
+                prevGas = step.gas;
+                prevGasCost = step.gasCost;
+            }
 
             // Manage call stack frames based on depth
             // Only recreate all frames when depth changes; otherwise just update current frame PC
@@ -537,17 +588,12 @@ public class TraceGeneratorCore {
      * Stack space has wordsize=8, so each addressing unit = 8 bytes
      * Each stack item = 32 bytes = 4 addressing units
      */
-    private void writeStackToMemory(ToyDBTraceBuilder builder,
+    private void writeStackToMemory(TraceMemoryManager memMgr,
+                                    AddressSpace stkSpace,
                                     long snap,
                                     long prev_sp,
                                     long sp,
                                     List<BigInteger> stack) throws Exception {
-        TraceMemoryManager memMgr = builder.trace.getMemoryManager();
-        AddressSpace stkSpace = builder.language.getAddressFactory().getAddressSpace("stk");
-
-        if (stkSpace == null) {
-            throw new Exception("Stack address space not found");
-        }
 
         // Clear stack memory between prev_sp and STACK_TOP
         // prev_sp and STACK_TOP are in addressing units (each unit = 8 bytes)
@@ -609,14 +655,8 @@ public class TraceGeneratorCore {
      * @param snap Snapshot key
      * @param callData Call data hex string (with or without 0x prefix)
      */
-    private void writeCalldataToMemory(ToyDBTraceBuilder builder, long snap, String callData) throws Exception {
-        TraceMemoryManager memMgr = builder.trace.getMemoryManager();
-        AddressSpace ramSpace = builder.language.getAddressFactory().getAddressSpace("ram");
-
-        if (ramSpace == null) {
-            throw new Exception("RAM address space not found");
-        }
-
+    private void writeCalldataToMemory(TraceMemoryManager memMgr, AddressSpace ramSpace,
+                                       long snap, String callData) throws Exception {
         Address baseAddr = ramSpace.getAddress(CALLDATA_BASE);
 
         // Convert calldata hex string to bytes
@@ -653,14 +693,8 @@ public class TraceGeneratorCore {
      * @param snap Snapshot key
      * @param evmMemory EVM memory hex string (without 0x prefix)
      */
-    private void writeEvmMemoryToRam(ToyDBTraceBuilder builder, long snap, String evmMemory) throws Exception {
-        TraceMemoryManager memMgr = builder.trace.getMemoryManager();
-        AddressSpace ramSpace = builder.language.getAddressFactory().getAddressSpace("ram");
-
-        if (ramSpace == null) {
-            throw new Exception("RAM address space not found");
-        }
-
+    private void writeEvmMemoryToRam(TraceMemoryManager memMgr, AddressSpace ramSpace,
+                                     long snap, String evmMemory) throws Exception {
         Address baseAddr = ramSpace.getAddress(EVM_MEMORY_BASE);
 
         // Convert memory hex string to bytes
@@ -706,14 +740,8 @@ public class TraceGeneratorCore {
      * @param snap Snapshot key
      * @param evmStack List of stack values (hex strings, top of stack at end of list)
      */
-    private void writeEvmStackToRam(ToyDBTraceBuilder builder, long snap, List<String> evmStack) throws Exception {
-        TraceMemoryManager memMgr = builder.trace.getMemoryManager();
-        AddressSpace ramSpace = builder.language.getAddressFactory().getAddressSpace("ram");
-
-        if (ramSpace == null) {
-            throw new Exception("RAM address space not found");
-        }
-
+    private void writeEvmStackToRam(TraceMemoryManager memMgr, AddressSpace ramSpace,
+                                    long snap, List<String> evmStack) throws Exception {
         Address baseAddr = ramSpace.getAddress(EVM_STACK_BASE);
 
         int stackSize = (evmStack != null) ? evmStack.size() : 0;
@@ -767,14 +795,8 @@ public class TraceGeneratorCore {
      * @param snap Snapshot key
      * @param storage Map of storage key -> value (hex strings)
      */
-    private void writeStorageToRam(ToyDBTraceBuilder builder, long snap, Map<String, String> storage) throws Exception {
-        TraceMemoryManager memMgr = builder.trace.getMemoryManager();
-        AddressSpace ramSpace = builder.language.getAddressFactory().getAddressSpace("ram");
-
-        if (ramSpace == null) {
-            throw new Exception("RAM address space not found");
-        }
-
+    private void writeStorageToRam(TraceMemoryManager memMgr, AddressSpace ramSpace,
+                                   long snap, Map<String, String> storage) throws Exception {
         Address baseAddr = ramSpace.getAddress(STORAGE_BASE);
 
         int pairCount = (storage != null) ? storage.size() : 0;
@@ -845,14 +867,8 @@ public class TraceGeneratorCore {
      * @param gas Gas remaining
      * @param gasCost Gas cost of current operation
      */
-    private void writeGasInfoToRam(ToyDBTraceBuilder builder, long snap, long gas, long gasCost) throws Exception {
-        TraceMemoryManager memMgr = builder.trace.getMemoryManager();
-        AddressSpace ramSpace = builder.language.getAddressFactory().getAddressSpace("ram");
-
-        if (ramSpace == null) {
-            throw new Exception("RAM address space not found");
-        }
-
+    private void writeGasInfoToRam(TraceMemoryManager memMgr, AddressSpace ramSpace,
+                                   long snap, long gas, long gasCost) throws Exception {
         Address baseAddr = ramSpace.getAddress(GAS_BASE);
 
         // Create buffer: 4 bytes for gas + 4 bytes for gasCost

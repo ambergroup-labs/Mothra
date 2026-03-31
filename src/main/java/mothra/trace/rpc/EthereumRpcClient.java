@@ -45,6 +45,7 @@ public class EthereumRpcClient {
     private final String rpcUrl;
     private final Gson gson;
     private int requestId;
+    private boolean connectionValid = true;
 
     /**
      * Create a new Ethereum RPC client
@@ -200,6 +201,10 @@ public class EthereumRpcClient {
      */
     private String callRpc(TaskMonitor monitor, String method, Object... params)
             throws IOException, CancelledException {
+        if (!connectionValid) {
+            throw new IOException("RPC connection is not available: " + rpcUrl);
+        }
+
         // Check before starting
         if (monitor.isCancelled()) {
             throw new CancelledException();
@@ -319,9 +324,10 @@ public class EthereumRpcClient {
     public boolean testConnection() {
         try {
             callRpc(TaskMonitor.DUMMY, "eth_blockNumber");
-            return true;
+            connectionValid = true;
         } catch (Exception e) {
-            return false;
+            connectionValid = false;
         }
+        return connectionValid;
     }
 }

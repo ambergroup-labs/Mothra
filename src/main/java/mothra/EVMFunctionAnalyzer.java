@@ -388,6 +388,10 @@ public class EVMFunctionAnalyzer extends AbstractAnalyzer {
 		InstructionIterator instIter = program.getListing().getInstructions(blockSet, true);
 		ReferenceManager refManager = program.getReferenceManager();
 
+		long blockSize = block.getSize();
+		long blockBase = block.getStart().getOffset();
+		long baseMask = blockBase & 0xFFFF0000L;
+
 		while (instIter.hasNext()) {
 			monitor.checkCancelled();
 			Instruction instr = instIter.next();
@@ -408,17 +412,17 @@ public class EVMFunctionAnalyzer extends AbstractAnalyzer {
 			// (values less than CONTRACT_SPACING = 0x10000)
 			// Use Long.compareUnsigned to handle large unsigned values correctly
 			// (Java's long is signed, so large values appear negative)
-			if (Long.compareUnsigned(pushedValue, 0x10000L) >= 0) {
+			if (Long.compareUnsigned(pushedValue, blockSize) >= 0) {
 				continue;
 			}
 
 			// Calculate the correct destination address
-			long blockBase = block.getStart().getOffset();
-			long baseMask = blockBase & 0xFFFF0000L;
 			long destOffset = baseMask + pushedValue;
-
 			// Verify destOffset is within valid address range (32-bit for EVM)
-			if (Long.compareUnsigned(destOffset, 0xFFFFFFFFL) > 0) {
+			if (Long.compareUnsigned(destOffset, blockBase + blockSize) > 0) {
+				continue;
+			}
+			if (Long.compareUnsigned(destOffset, blockBase) < 0) {
 				continue;
 			}
 

@@ -526,12 +526,10 @@ public class MothraPlugin extends Plugin
 		// Create RPC client
 		EthereumRpcClient rpcClient = new EthereumRpcClient(rpcUrl);
 
-		// Test connection
+		// Test connection (result stored in rpcClient; callRpc will throw if false)
 		monitor.setMessage("Testing RPC connection...");
-		if (!rpcClient.testConnection()) {
-			throw new IOException("Cannot connect to RPC endpoint: " + rpcUrl);
-		}
-		MothraLog.info(this, "✓ Connected to RPC endpoint");
+		boolean connected = rpcClient.testConnection();
+		MothraLog.info(this, "RPC connection test done (valid=" + connected + ")");
 		monitor.setProgress(5);
 
 		if (monitor.isCancelled()) {
