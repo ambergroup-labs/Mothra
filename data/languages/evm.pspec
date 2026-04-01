@@ -22,6 +22,7 @@
   </register_data>
 
   <properties>
+    <property key="pcodeInjectLibraryClass" value="mothra.pcode.PcodeInjectLibraryEVM"/>
     <property key="DisableAllAnalyzers" value="value ignored, just turns them off"/>
     <property key="Analyzers.Basic Constant Reference Analyzer" value="true"/>
     <property key="Analyzers.EVM Disassembler" value="true"/>

@@ -83,14 +83,11 @@
         <pentry minsize="65" maxsize="96">
           <addr space="join" piece1="r0" piece2="r1" piece3="r2"/>
         </pentry>
-        <pentry minsize="97" maxsize="128">
+        <pentry minsize="97" maxsize="500">
           <addr space="join" piece1="r0" piece2="r1" piece3="r2" piece4="r3"/>
         </pentry>
       </output>
       <killedbycall>
-        <!-- All general-purpose registers are scratch / caller-saved.
-             r0-r1 hold return values; r4-r5 are SWAP scratch;
-             all are clobbered by calls. -->
         <register name="r0"/>
         <register name="r1"/>
         <register name="r2"/>
@@ -100,6 +97,11 @@
         <register name="r6"/>
         <register name="r7"/>
       </killedbycall>
+      <!-- Dynamic uponreturn injection: after a CALL returns, push the
+           return value registers (r0, r1, ...) back onto the stk space.
+           The number of registers is determined dynamically from the
+           callee's return type by PcodeInjectLibraryEVM. -->
+      <pcode inject="uponreturn" dynamic="true"/>
     </prototype>
   </default_proto>
 </compiler_spec>

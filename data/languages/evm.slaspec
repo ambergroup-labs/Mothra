@@ -505,7 +505,6 @@ define pcodeop _gas;
 
 :PUSH0 is op=0x5f {
     r0 = 0;
-    jumpdest = 0;
     push(r0);
 }
 
@@ -526,186 +525,156 @@ define pcodeop _gas;
 :PUSH3 imm24 is op=0x62 ; imm24 {
     local val:3 = imm24;
     r0 = zext(val);
-    jumpdest = zext(val);
     push(r0);
 }
 
 :PUSH4 imm32 is op=0x63 ; imm32 {
     local val:4 = imm32;
     r0 = zext(val);
-    jumpdest = imm32;
     push(r0);
 }
 
 :PUSH5 imm40 is op=0x64 ; imm40 {
     local val:5 = imm40;
     r0 = zext(val);
-    jumpdest = val:4;
     push(r0);
 }
 
 :PUSH6 imm48 is op=0x65 ; imm48 {
     local val:6 = imm48;
     r0 = zext(val);
-    jumpdest = val:4;
     push(r0);
 }
 
 :PUSH7 imm56 is op=0x66 ; imm56 {
     local val:7 = imm56;
     r0 = zext(val);
-    jumpdest = val:4;
     push(r0);
 }
 
 :PUSH8 imm64 is op=0x67 ; imm64 {
     local val:8 = imm64;
     r0 = zext(val);
-    jumpdest = imm64:4;
     push(r0);
 }
 
 :PUSH9 imm8, imm64 is op=0x68 ; imm8 ; imm64 {
     r0 = imm8 << 64 | imm64;
-    jumpdest = imm64:4;
     push(r0);
 }
 
 :PUSH10 imm16, imm64 is op=0x69 ; imm16 ; imm64 {
     r0 = imm16 << 64 | imm64;
-    jumpdest = imm64:4;
     push(r0);
 }
 
 :PUSH11 imm24, imm64 is op=0x6a ; imm24 ; imm64 {
     r0 = imm24 << 64 | imm64;
-    jumpdest = imm64:4;
     push(r0);
 }
 
 :PUSH12 imm32, imm64 is op=0x6b ; imm32 ; imm64 {
     r0 = imm32 << 64 | imm64;
-    jumpdest = imm64:4;
     push(r0);
 }
 
 :PUSH13 imm40, imm64 is op=0x6c ; imm40 ; imm64 {
     r0 = imm40 << 64 | imm64;
-    jumpdest = imm64:4;
     push(r0);
 }
 
 :PUSH14 imm48, imm64 is op=0x6d ; imm48 ; imm64 {
     r0 = imm48 << 64 | imm64;
-    jumpdest = imm64:4;
     push(r0);
 }
 
 :PUSH15 imm56, imm64 is op=0x6e ; imm56 ; imm64 {
     r0 = imm56 << 64 | imm64;
-    jumpdest = imm64:4;
     push(r0);
 }
 
 :PUSH16 imm64, imm64_z is op=0x6f ; imm64 ; imm64_z {
     r0 = imm64 << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH17 imm8, imm64_y, imm64_z is op=0x70 ; imm8 ; imm64_y ; imm64_z {
     r0 = imm8 << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH18 imm16, imm64_y, imm64_z is op=0x71 ; imm16 ; imm64_y ; imm64_z {
     r0 = imm16 << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH19 imm24, imm64_y, imm64_z is op=0x72 ; imm24 ; imm64_y ; imm64_z {
     r0 = imm24 << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH20 imm32, imm64_y, imm64_z is op=0x73 ; imm32 ; imm64_y ; imm64_z {
     r0 = imm32 << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH21 imm40, imm64_y, imm64_z is op=0x74 ; imm40 ; imm64_y ; imm64_z {
     r0 = imm40 << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH22 imm48, imm64_y, imm64_z is op=0x75 ; imm48 ; imm64_y ; imm64_z {
     r0 = imm48 << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH23 imm56, imm64_y, imm64_z is op=0x76 ; imm56 ; imm64_y ; imm64_z {
     r0 = imm56 << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH24 imm64, imm64_y, imm64_z is op=0x77 ; imm64 ; imm64_y ; imm64_z {
     r0 = imm64 << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH25 imm8, imm64_x, imm64_y, imm64_z is op=0x78 ; imm8 ; imm64_x ; imm64_y ; imm64_z {
     r0 = imm8 << 192 | imm64_x << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH26 imm16, imm64_x, imm64_y, imm64_z is op=0x79 ; imm16 ; imm64_x ; imm64_y ; imm64_z {
     r0 = imm16 << 192 | imm64_x << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH27 imm24, imm64_x, imm64_y, imm64_z is op=0x7a ; imm24 ; imm64_x ; imm64_y ; imm64_z {
     r0 = imm24 << 192 | imm64_x << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH28 imm32, imm64_x, imm64_y, imm64_z is op=0x7b ; imm32 ; imm64_x ; imm64_y ; imm64_z {
     r0 = imm32 << 192 | imm64_x << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH29 imm40, imm64_x, imm64_y, imm64_z is op=0x7c ; imm40 ; imm64_x ; imm64_y ; imm64_z {
     r0 = imm40 << 192 | imm64_x << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH30 imm48, imm64_x, imm64_y, imm64_z is op=0x7d ; imm48 ; imm64_x ; imm64_y ; imm64_z {
     r0 = imm48 << 192 | imm64_x << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH31 imm56, imm64_x, imm64_y, imm64_z is op=0x7e ; imm56 ; imm64_x ; imm64_y ; imm64_z {
     r0 = imm56 << 192 | imm64_x << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
 :PUSH32 imm64, imm64_x, imm64_y, imm64_z is op=0x7f ; imm64; imm64_x ; imm64_y ; imm64_z {
     r0 = imm64 << 192 | imm64_x << 128 | imm64_y << 64 | imm64_z;
-    jumpdest = imm64_z:4;
     push(r0);
 }
 
@@ -720,6 +689,7 @@ define pcodeop _gas;
     r4 = *[stk] (SP + 16);
     r5 = *[stk] (SP + 20);
     r6 = *[stk] (SP + 24);
+    r7 = *[stk] (SP + 28);
     local p:4 = target:4;
     local p1:4 = (inst_next & 0xFFFF0000) + p;
     goto [p1];
@@ -734,8 +704,6 @@ define pcodeop _gas;
     goto [p1];
 }
 
-# Default JUMPDEST (noWriteBack=0): write r0/r1 to stk.
-# This bridges register-based CALL output with EVM's stack-based reality.
 :JUMPDEST is op=0x5b { }
 
 define pcodeop _tload;

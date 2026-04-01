@@ -592,13 +592,15 @@ public class InputArgsAnalyzer extends AbstractAnalyzer {
 
 	/**
 	 * Create return parameter with the appropriate data type.
-	 * Storage is assigned automatically by the "solc" calling convention
-	 * (defined in evm.cspec) when using DYNAMIC_STORAGE_ALL_PARAMS:
+	 * Uses CUSTOM_STORAGE with joined registers:
 	 *
-	 * - 1 return (32 bytes):  r0             via cspec output entry 1
-	 * - 2 returns (64 bytes): join r0:r1     via cspec output entry 2
-	 * - 3 returns (96 bytes): join r0:r1:r2  via cspec output entry 3
-	 * - 4 returns (128 bytes): join r0:r1:r2:r3 via cspec output entry 4
+	 * - 1 return (32 bytes):  r0
+	 * - 2 returns (64 bytes): join r0:r1
+	 * - 3 returns (96 bytes): join r0:r1:r2
+	 * - 4 returns (128 bytes): join r0:r1:r2:r3
+	 *
+	 * Capped at 4 returns because Ghidra's join storage supports at most
+	 * 4 pieces. Functions returning more than 4 values are rare in practice.
 	 */
 	private Parameter createReturnParameter(Program program, int returnCount)
 			throws InvalidInputException {
