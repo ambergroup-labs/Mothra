@@ -1,6 +1,5 @@
 <opinions>
-	<constraint loader="EVM loader" compilerSpecID="default, V1">
+	<constraint loader="EVM loader" compilerSpecID="default">
         <constraint	processor="EVM" endian="big" size="256" />
-        <constraint	processor="EOF" endian="big" size="256" />
     </constraint>
 </opinions>

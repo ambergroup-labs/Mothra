@@ -7,7 +7,22 @@
   <default_symbols>
     <symbol name="entry" address="ram:0x00000" type="code" entry="true"/>
   </default_symbols>
+
+  <!-- Define register groups for the decompiler -->
+  <!-- EVM uses 256-bit (32-byte) registers for all operations -->
+  <register_data>
+    <register name="r0" group="GPR"/>
+    <register name="r1" group="GPR"/>
+    <register name="r2" group="GPR"/>
+    <register name="r3" group="GPR"/>
+    <register name="r4" group="GPR"/>
+    <register name="r5" group="GPR"/>
+    <register name="r6" group="GPR"/>
+    <register name="r7" group="GPR"/>
+  </register_data>
+
   <properties>
+    <property key="pcodeInjectLibraryClass" value="mothra.pcode.PcodeInjectLibraryEVM"/>
     <property key="DisableAllAnalyzers" value="value ignored, just turns them off"/>
     <property key="Analyzers.Basic Constant Reference Analyzer" value="true"/>
     <property key="Analyzers.EVM Disassembler" value="true"/>

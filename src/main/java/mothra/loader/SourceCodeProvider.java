@@ -9,10 +9,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 
-import javax.swing.JComponent;
-import javax.swing.JPanel;
-
+import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.border.TitledBorder;
 
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
@@ -35,10 +34,9 @@ import ghidra.program.util.ProgramSelection;
 
 public class SourceCodeProvider extends ComponentProviderAdapter {
 
-    // Etherscan API configuration
-    private static final String ETHERSCAN_API_URL = "https://api.etherscan.io/v2/api";
-    private static final String ETHERSCAN_API_KEY = "EWFME7AH6URPNUIKUDJR4ZQ9H7S8IK3ZHG";
-    private static final String CHAIN_ID = "1"; // Ethereum mainnet
+    // Etherscan API configuration - defaults
+    private static final String DEFAULT_API_URL = "https://api.etherscan.io/v2/api";
+    private static final String DEFAULT_CHAIN_ID = "1"; // Ethereum mainnet
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -49,6 +47,14 @@ public class SourceCodeProvider extends ComponentProviderAdapter {
     private final ProgramPlugin plugin;
     private Address currentAddress;
     private ProgramSelection currentSelection;
+
+    // User-configurable API settings
+    private JTextField apiUrlField;
+    private JTextField apiKeyField;
+    private JTextField chainIdField;
+    private String etherscanApiUrl;
+    private String etherscanApiKey;
+    private String chainId;
 
     SourceCodeProvider(PluginTool tool, ProgramPlugin plugin) {
         super(tool, "EVM Contract Source", plugin.getName());
@@ -94,9 +100,29 @@ public class SourceCodeProvider extends ComponentProviderAdapter {
     }
 
     private String fetchContractSourceCode(String contractAddress) {
+        // Check if API key is configured
+        if (etherscanApiKey == null || etherscanApiKey.isEmpty()) {
+            return "// Error: Etherscan API key is not configured.\n" +
+                   "// Please enter your API key in the configuration panel above and click 'Fetch Source'.";
+        }
+
+        // Ensure contract address has 0x prefix
+        String formattedAddress = contractAddress;
+        if (formattedAddress != null && !formattedAddress.startsWith("0x") && !formattedAddress.startsWith("0X")) {
+            formattedAddress = "0x" + formattedAddress;
+        }
+
         try {
+            // Use configured chain ID, default to 1 if not set
+            String effectiveChainId = (chainId != null && !chainId.isEmpty()) ? chainId : DEFAULT_CHAIN_ID;
+
             String apiUrl = String.format("%s?chainid=%s&module=contract&action=getsourcecode&address=%s&apikey=%s",
-                    ETHERSCAN_API_URL, CHAIN_ID, contractAddress, ETHERSCAN_API_KEY);
+                    etherscanApiUrl, effectiveChainId, formattedAddress, etherscanApiKey);
+
+            // Debug: Log the API URL (without the API key for security)
+            System.out.println("[SourceCodeProvider] Fetching source for address: " + formattedAddress);
+            System.out.println("[SourceCodeProvider] API URL: " + etherscanApiUrl + "?chainid=" + effectiveChainId +
+                              "&module=contract&action=getsourcecode&address=" + formattedAddress + "&apikey=***");
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(apiUrl))
@@ -106,20 +132,37 @@ public class SourceCodeProvider extends ComponentProviderAdapter {
 
             HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
+            // Debug: Log response status
+            System.out.println("[SourceCodeProvider] HTTP Status: " + response.statusCode());
+
             if (response.statusCode() != 200) {
-                return "// Error: Failed to fetch source code (HTTP " + response.statusCode() + ")";
+                return "// Error: Failed to fetch source code (HTTP " + response.statusCode() + ")\n" +
+                       "// Response: " + response.body();
             }
 
-            JsonNode rootNode = JSON_MAPPER.readTree(response.body());
+            String responseBody = response.body();
+            // Debug: Log first 500 chars of response
+            System.out.println("[SourceCodeProvider] Response (first 500 chars): " +
+                              responseBody.substring(0, Math.min(500, responseBody.length())));
+
+            JsonNode rootNode = JSON_MAPPER.readTree(responseBody);
             String status = rootNode.path("status").asText();
+            String message = rootNode.path("message").asText();
 
             if (!"1".equals(status)) {
-                return "// Error: Contract not verified on Etherscan";
+                // Get the actual error message from the API
+                String errorResult = rootNode.path("result").asText();
+                return "// Error: API returned status=" + status + "\n" +
+                       "// Message: " + message + "\n" +
+                       "// Result: " + errorResult + "\n" +
+                       "// Contract Address: " + formattedAddress;
             }
 
             JsonNode resultNode = rootNode.path("result");
             if (!resultNode.isArray() || resultNode.size() == 0) {
-                return "// Error: No contract data found";
+                return "// Error: No contract data found\n" +
+                       "// Contract Address: " + formattedAddress + "\n" +
+                       "// Raw result: " + resultNode.toString();
             }
 
             JsonNode contractNode = resultNode.get(0);
@@ -211,8 +254,105 @@ public class SourceCodeProvider extends ComponentProviderAdapter {
     }
 
     private JPanel createTopPanel() {
-        // No buttons needed, just return empty panel
-        return new JPanel();
+        JPanel topPanel = new JPanel(new BorderLayout(5, 5));
+        topPanel.setBorder(new TitledBorder("Etherscan API Configuration"));
+
+        // Create input panel with GridBagLayout for better control
+        JPanel inputPanel = new JPanel(new java.awt.GridBagLayout());
+        java.awt.GridBagConstraints gbc = new java.awt.GridBagConstraints();
+        gbc.insets = new java.awt.Insets(2, 5, 2, 5);
+        gbc.fill = java.awt.GridBagConstraints.HORIZONTAL;
+
+        // API URL label and field
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.weightx = 0;
+        inputPanel.add(new JLabel("API URL:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        gbc.gridwidth = 3;
+        apiUrlField = new JTextField(DEFAULT_API_URL, 40);
+        apiUrlField.setToolTipText("Etherscan API endpoint URL (e.g., https://api.etherscan.io/v2/api)");
+        inputPanel.add(apiUrlField, gbc);
+
+        // API Key label and field
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        gbc.weightx = 0;
+        gbc.gridwidth = 1;
+        inputPanel.add(new JLabel("API Key:"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        gbc.gridwidth = 1;
+        apiKeyField = new JTextField(25);
+        apiKeyField.setToolTipText("Your Etherscan API key (required)");
+        inputPanel.add(apiKeyField, gbc);
+
+        // Chain ID label and field (on same row as API Key)
+        gbc.gridx = 2;
+        gbc.weightx = 0;
+        gbc.gridwidth = 1;
+        inputPanel.add(new JLabel("  Chain ID:"), gbc);
+
+        gbc.gridx = 3;
+        gbc.weightx = 0;
+        gbc.gridwidth = 1;
+        chainIdField = new JTextField(DEFAULT_CHAIN_ID, 6);
+        chainIdField.setToolTipText("Blockchain chain ID (1=Ethereum, 56=BSC, 137=Polygon, 42161=Arbitrum, 10=Optimism)");
+        inputPanel.add(chainIdField, gbc);
+
+        topPanel.add(inputPanel, BorderLayout.CENTER);
+
+        // Button panel
+        JPanel buttonPanel = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT));
+
+        JButton fetchButton = new JButton("Fetch Source");
+        fetchButton.setToolTipText("Fetch source code for the current contract");
+        fetchButton.addActionListener(e -> {
+            // Save the current API settings
+            etherscanApiUrl = apiUrlField.getText().trim();
+            etherscanApiKey = apiKeyField.getText().trim();
+            chainId = chainIdField.getText().trim();
+
+            if (etherscanApiKey.isEmpty()) {
+                JOptionPane.showMessageDialog(mainPanel,
+                    "Please enter your Etherscan API key.",
+                    "API Key Required",
+                    JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+
+            if (chainId.isEmpty()) {
+                chainId = DEFAULT_CHAIN_ID;
+                chainIdField.setText(DEFAULT_CHAIN_ID);
+            }
+
+            // Fetch source code for current address
+            if (currentAddress != null) {
+                updateContentForAddress(currentAddress);
+            } else {
+                // Try to find first contract address
+                String contractAddr = findFirstContractAddress(getCurrentProgram());
+                if (contractAddr != null) {
+                    String sourceCode = fetchContractSourceCode(contractAddr);
+                    setText(sourceCode);
+                } else {
+                    setText("// No contract address found. Please select an address in the Listing window.");
+                }
+            }
+        });
+        buttonPanel.add(fetchButton);
+
+        topPanel.add(buttonPanel, BorderLayout.EAST);
+
+        // Initialize API settings from fields
+        etherscanApiUrl = DEFAULT_API_URL;
+        etherscanApiKey = "";
+        chainId = DEFAULT_CHAIN_ID;
+
+        return topPanel;
     }
 
     private JPanel createBottomPanel() {

@@ -66,6 +66,7 @@ public class Opcode {
         StackChanges.put("TIMESTAMP", 1); // Pushes 1 item to the stack
         StackChanges.put("NUMBER", 1); // Pushes 1 item to the stack
         StackChanges.put("PREVRANDAO", 1); // Pushes 1 item to the stack
+        StackChanges.put("DIFFICULTY", 1); // Pre-Merge name for PREVRANDAO (same opcode 0x44)
         StackChanges.put("GASLIMIT", 1); // Pushes 1 item to the stack
         StackChanges.put("CHAINID", 1); // Pushes 1 item to the stack
         StackChanges.put("SELFBALANCE", 1); // Pushes 1 item to the stack
@@ -129,7 +130,8 @@ public class Opcode {
     public int stackChanges(String mnemonic) {
         Integer stackChange = StackChanges.get(mnemonic);
         if (stackChange == null) {
-            System.out.println(mnemonic);
+            System.err.println("[Opcode] WARNING: Unknown mnemonic '" + mnemonic + "', assuming stack change of 0");
+            return 0;
         }
         return stackChange;
     }

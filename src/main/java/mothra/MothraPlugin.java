@@ -19,13 +19,10 @@ import java.awt.BorderLayout;
 import java.awt.GridLayout;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import javax.swing.JButton;
-import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
@@ -33,6 +30,7 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
+import javax.swing.JTextField;
 
 import org.web3j.protocol.Web3j;
 import org.web3j.protocol.core.DefaultBlockParameterName;
@@ -47,9 +45,12 @@ import docking.widgets.filechooser.GhidraFileChooser;
 import ghidra.app.CorePluginPackage;
 import ghidra.app.events.ProgramActivatedPluginEvent;
 import ghidra.app.plugin.PluginCategoryNames;
+import ghidra.util.Msg;
+import ghidra.app.util.Option;
 import ghidra.app.util.bin.ByteArrayProvider;
 import ghidra.app.util.bin.ByteProvider;
 import ghidra.app.util.importer.MessageLog;
+import ghidra.app.util.opinion.Loader.ImporterSettings;
 import ghidra.app.util.opinion.LoadResults;
 import ghidra.app.util.opinion.LoadSpec;
 import ghidra.framework.main.AppInfo;
@@ -66,11 +67,20 @@ import ghidra.framework.plugintool.PluginTool;
 import ghidra.framework.plugintool.util.PluginStatus;
 import ghidra.program.model.lang.LanguageCompilerSpecPair;
 import ghidra.util.HelpLocation;
-import ghidra.util.task.ConsoleTaskMonitor;
+import ghidra.util.task.Task;
+import ghidra.util.task.TaskLauncher;
 import ghidra.util.task.TaskMonitor;
-import mothra.loader.EOFLoader;
 import mothra.loader.EVMLoader;
-import mothra.loader.traceLoader;
+import mothra.loader.TraceLoader;
+import mothra.trace.data.DataStore;
+import mothra.trace.data.TraceConfiguration;
+import mothra.trace.rpc.EthereumRpcClient;
+import mothra.trace.util.CacheManager;
+import mothra.trace.generator.TraceGeneratorCore;
+import mothra.util.MothraLog;
+import ghidra.framework.model.DomainFolder;
+import ghidra.framework.model.DomainFile;
+import java.io.File;
 
 //@formatter:off
 @PluginInfo(
@@ -87,6 +97,8 @@ public class MothraPlugin extends Plugin
 
 	private static final String SIMPLE_UNPACK_OPTION = "";
 	private static final boolean SIMPLE_UNPACK_OPTION_DEFAULT = false;
+	private static final String RPC_URL_OPTION = "Mothra.RPC_URL";
+	private static final String RPC_URL_DEFAULT = "http://localhost:8545";
 
 	private DockingAction downloadBytecodeAction;
 	private GhidraFileChooser chooser;
@@ -110,6 +122,12 @@ public class MothraPlugin extends Plugin
 			options.registerOption(SIMPLE_UNPACK_OPTION, SIMPLE_UNPACK_OPTION_DEFAULT, help,
 					"Perform simple unpack when any packed DB file is imported");
 		}
+
+		// Register RPC URL option for persistence
+		ToolOptions mothraOptions = tool.getOptions("Mothra");
+		HelpLocation mothraHelp = new HelpLocation("Mothra", "RPC_Configuration");
+		mothraOptions.registerOption(RPC_URL_OPTION, RPC_URL_DEFAULT, mothraHelp,
+				"Default RPC endpoint URL for Ethereum node connection");
 
 		setupDownloadBytecodeAction();
 	}
@@ -167,20 +185,41 @@ public class MothraPlugin extends Plugin
 		// No-ops
 	}
 
+	/**
+	 * Get the saved RPC URL from tool options
+	 */
+	private String getSavedRpcUrl() {
+		ToolOptions options = tool.getOptions("Mothra");
+		return options.getString(RPC_URL_OPTION, RPC_URL_DEFAULT);
+	}
+
+	/**
+	 * Save the RPC URL to tool options
+	 */
+	private void saveRpcUrl(String rpcUrl) {
+		if (rpcUrl != null && !rpcUrl.trim().isEmpty()) {
+			ToolOptions options = tool.getOptions("Mothra");
+			options.setString(RPC_URL_OPTION, rpcUrl.trim());
+		}
+	}
+
 	private void showDownloadBytecodeDialog() {
 		JDialog dialog = createDialog("Download ByteCode");
 
 		// Create the necessary input components
-		JComboBox<String> networkOptionsComboBox = createNetworkOptionsComboBox();
-		JTextArea filenameTextArea = createTextArea(1, 5);
-		JTextArea fetchBytecodeOptionTextArea = createTextArea(20, 50);
+		// Use JTextField for single-line inputs (RPC URL and filename)
+		JTextField rpcUrlField = new JTextField(50);
+		rpcUrlField.setText(getSavedRpcUrl());  // Load saved RPC URL
+		JTextField filenameField = new JTextField(50);
+		// Use JTextArea for multi-line input (bytecode can be very long)
+		JTextArea fetchBytecodeOptionTextArea = createTextArea(10, 50);
 
 		// Set up the main content
-		setupMainContent(dialog, networkOptionsComboBox, filenameTextArea,
+		setupMainContent(dialog, rpcUrlField, filenameField,
 				fetchBytecodeOptionTextArea);
 
 		// Set up the buttons and their actions
-		setupButtonsAndActions(dialog, networkOptionsComboBox, filenameTextArea,
+		setupButtonsAndActions(dialog, rpcUrlField, filenameField,
 				fetchBytecodeOptionTextArea);
 
 		// Finalize the dialog setup
@@ -193,13 +232,6 @@ public class MothraPlugin extends Plugin
 		return dialog;
 	}
 
-	private JComboBox<String> createNetworkOptionsComboBox() {
-		String[] networkOptions = { "Ethereum", "Polygon", "Arbitrum", "Optimism", "More" };
-		JComboBox<String> comboBox = new JComboBox<>(networkOptions);
-		comboBox.setEditable(true);
-		return comboBox;
-	}
-
 	private JTextArea createTextArea(int rows, int columns) {
 		JTextArea textArea = new JTextArea(rows, columns);
 		textArea.setWrapStyleWord(true);
@@ -207,18 +239,21 @@ public class MothraPlugin extends Plugin
 		return textArea;
 	}
 
-	private void setupMainContent(JDialog dialog, JComboBox<String> networkOptionsComboBox,
-			JTextArea filenameTextArea,
+	private void setupMainContent(JDialog dialog, JTextField rpcUrlField,
+			JTextField filenameField,
 			JTextArea fetchBytecodeOptionTextArea) {
-		JPanel mainPanel = new JPanel(new BorderLayout());
+		// Create top panel for single-line inputs (minimal height)
+		JPanel topPanel = new JPanel(new GridLayout(2, 1, 5, 5));
+		topPanel.add(createPanel("RPC Endpoint URL", rpcUrlField));
+		topPanel.add(createPanel("File Name", filenameField));
 
-		mainPanel.add(createPanel("Network", networkOptionsComboBox), BorderLayout.NORTH);
-		mainPanel.add(createPanel("File Name", new JScrollPane(filenameTextArea)),
-				BorderLayout.CENTER);
-		mainPanel.add(
-				createPanel("Deployed Bytecode / Contract Address / Transaction Hash",
-						new JScrollPane(fetchBytecodeOptionTextArea)),
-				BorderLayout.SOUTH);
+		// Main panel using BorderLayout to allocate space properly
+		JPanel mainPanel = new JPanel(new BorderLayout(5, 5));
+		// Single-line inputs at the top (minimal space)
+		mainPanel.add(topPanel, BorderLayout.NORTH);
+		// Multi-line bytecode area in center (gets expanding space)
+		mainPanel.add(createPanel("Deployed Bytecode / Contract Address / Transaction Hash",
+				new JScrollPane(fetchBytecodeOptionTextArea)), BorderLayout.CENTER);
 
 		dialog.add(mainPanel, BorderLayout.CENTER);
 	}
@@ -231,9 +266,9 @@ public class MothraPlugin extends Plugin
 		return panel;
 	}
 
-	private void setupButtonsAndActions(JDialog dialog, JComboBox<String> networkOptionsComboBox,
-			JTextArea filenameTextArea, JTextArea fetchBytecodeOptionTextArea) {
-		JPanel buttonPanel = new JPanel(new GridLayout(1, 4));
+	private void setupButtonsAndActions(JDialog dialog, JTextField rpcUrlField,
+			JTextField filenameField, JTextArea fetchBytecodeOptionTextArea) {
+		JPanel buttonPanel = new JPanel(new GridLayout(1, 3));
 		JButton loadByBytecodeButton = new JButton("By Bytecode");
 		JButton loadByAddressButton = new JButton("By Address");
 		JButton loadByTxHashButton = new JButton("By Transaction");
@@ -243,35 +278,26 @@ public class MothraPlugin extends Plugin
 		buttonPanel.add(loadByTxHashButton);
 		dialog.add(buttonPanel, BorderLayout.SOUTH);
 
-		Map<String, String> rpcNodeLinks = setupRpcNodeLinks();
-
 		loadByBytecodeButton.addActionListener(e -> {
 			dialog.dispose();
-			loadBytecode(fetchBytecodeOptionTextArea.getText(), filenameTextArea.getText());
+			loadBytecode(fetchBytecodeOptionTextArea.getText(), filenameField.getText());
 		});
 
 		loadByAddressButton.addActionListener(e -> {
 			dialog.dispose();
-			String selectedNetwork = (String) networkOptionsComboBox.getSelectedItem();
-			String rpcEndpoint = rpcNodeLinks.getOrDefault(selectedNetwork, filenameTextArea.getText());
-			fetchContractBytecode(rpcEndpoint, fetchBytecodeOptionTextArea.getText(),
-					filenameTextArea.getText());
+			String rpcUrl = rpcUrlField.getText().trim();
+			saveRpcUrl(rpcUrl);  // Save RPC URL
+			fetchContractBytecode(rpcUrl, fetchBytecodeOptionTextArea.getText(),
+					filenameField.getText());
 		});
 
 		loadByTxHashButton.addActionListener(e -> {
 			dialog.dispose();
+			String rpcUrl = rpcUrlField.getText().trim();
 			String txHash = fetchBytecodeOptionTextArea.getText().trim();
-			loadTransactionTrace(txHash, filenameTextArea.getText());
+			saveRpcUrl(rpcUrl);  // Save RPC URL
+			loadTransactionTrace(txHash, filenameField.getText(), rpcUrl);
 		});
-	}
-
-	private Map<String, String> setupRpcNodeLinks() {
-		Map<String, String> rpcNodeLinks = new HashMap<>();
-		rpcNodeLinks.put("Ethereum", "https://rpc.ankr.com/eth");
-		rpcNodeLinks.put("Polygon", "https://rpc.ankr.com/polygon");
-		rpcNodeLinks.put("Arbitrum", "https://rpc.ankr.com/arbitrum");
-		rpcNodeLinks.put("Optimism", "https://rpc.ankr.com/optimism");
-		return rpcNodeLinks;
 	}
 
 	private void finalizeDialog(JDialog dialog) {
@@ -313,27 +339,16 @@ public class MothraPlugin extends Plugin
 		String fullFilename = appendSuffix(filename, ".evm");
 		try {
 			// Set up the loader and load specification
-			LanguageCompilerSpecPair compilerSpec = null;
-			LoadSpec loadSpec = null;
-			if (!isEOFCompatible(cleanedBytecode)) {
-				EVMLoader loader = new EVMLoader();
-				compilerSpec = new LanguageCompilerSpecPair("evm:256:default", "default");
-				loadSpec = new LoadSpec(loader, 0, compilerSpec, true);
-			} else {
-				EOFLoader loader = new EOFLoader();
-				compilerSpec = new LanguageCompilerSpecPair("EVM:256:EOF", "V1");
-				loadSpec = new LoadSpec(loader, 0, compilerSpec, true);
-			}
+			EVMLoader loader = new EVMLoader();
+			LanguageCompilerSpecPair compilerSpec =
+				new LanguageCompilerSpecPair("evm:256:default", "default");
+			LoadSpec loadSpec = new LoadSpec(loader, 0, compilerSpec, true);
 
 			// Load the bytecode using the custom loader
 			loadAndSaveBytecode(cleanedBytecode, fullFilename, loadSpec);
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
-	}
-
-	private boolean isEOFCompatible(String data) {
-		return (data.length() >= 2) && (data.startsWith("ef00"));
 	}
 
 	private String removePrefix(String input, String prefix) {
@@ -349,14 +364,26 @@ public class MothraPlugin extends Plugin
 		ByteProvider provider = new ByteArrayProvider(hexStringToByteArray(bytecode));
 		Project project = AppInfo.getActiveProject();
 		Object consumer = new Object();
-		TaskMonitor monitor = new ConsoleTaskMonitor();
+		TaskMonitor monitor = TaskMonitor.DUMMY;
+		MessageLog log = new MessageLog();
 
-		LoadResults<? extends DomainObject> results = loadSpec.getLoader()
-				.load(provider, filename, project, "",
-						loadSpec, new ArrayList<>(), new MessageLog(), consumer, monitor);
+		ImporterSettings settings = new ImporterSettings(
+			provider,
+			filename,
+			project,
+			"",
+			false,
+			loadSpec,
+			new ArrayList<Option>(),
+			consumer,
+			log,
+			monitor
+		);
+
+		LoadResults<? extends DomainObject> results = loadSpec.getLoader().load(settings);
 
 		// Save the loading results to the project
-		results.save(project, consumer, null, monitor);
+		results.save(monitor);
 	}
 
 	private byte[] hexStringToByteArray(String hexString) {
@@ -375,18 +402,247 @@ public class MothraPlugin extends Plugin
 		return byteCode;
 	}
 
-	private void loadTransactionTrace(String txHash, String filename) {
-		String fullFilename = appendSuffix(filename, ".evm");
-		try {
-			LanguageCompilerSpecPair compilerSpec = new LanguageCompilerSpecPair("evm:256:default", "default");
-			traceLoader loader = new traceLoader();
-			LoadSpec loadSpec = new LoadSpec(loader, 0, compilerSpec, true);
+	private void loadTransactionTrace(String txHash, String filename, String rpcUrl) {
+		// Ask user what to generate
+		String[] options = {"Program DB only", "Trace DB only", "Both (Recommended)"};
+		int choice = JOptionPane.showOptionDialog(
+			tool.getToolFrame(),
+			"What would you like to generate?",
+			"Generation Options",
+			JOptionPane.DEFAULT_OPTION,
+			JOptionPane.QUESTION_MESSAGE,
+			null,
+			options,
+			options[2]
+		);
 
-			loadAndSaveBytecode(txHash, fullFilename, loadSpec);
-		} catch (Exception e) {
-			e.printStackTrace();
-			showErrorPopup("Failed to load transaction trace",
-					"Error loading transaction trace: " + e.getMessage());
+		if (choice == JOptionPane.CLOSED_OPTION) {
+			return;  // User cancelled
+		}
+
+		boolean generateProgram = (choice == 0 || choice == 2);
+		boolean generateTrace = (choice == 1 || choice == 2);
+
+		// Create and launch the task with progress dialog
+		LoadTransactionTraceTask task = new LoadTransactionTraceTask(
+			txHash, filename, rpcUrl, generateProgram, generateTrace);
+		TaskLauncher.launch(task);
+	}
+
+	/**
+	 * Task for loading transaction trace with progress reporting
+	 */
+	private class LoadTransactionTraceTask extends Task {
+		private final String txHash;
+		private final String filename;
+		private final String rpcUrl;
+		private final boolean generateProgram;
+		private final boolean generateTrace;
+
+		public LoadTransactionTraceTask(String txHash, String filename, String rpcUrl,
+				boolean generateProgram, boolean generateTrace) {
+			super("Loading Transaction Trace", true, true, true);
+			this.txHash = txHash;
+			this.filename = filename;
+			this.rpcUrl = rpcUrl;
+			this.generateProgram = generateProgram;
+			this.generateTrace = generateTrace;
+		}
+
+		@Override
+		public void run(TaskMonitor monitor) {
+			try {
+				// Initialize cache
+				CacheManager.initialize();
+
+				// Phase 1: Fetch and process data (0-30%)
+				monitor.setMessage("Fetching transaction data from RPC...");
+				monitor.setProgress(0);
+				DataStore dataStore = fetchAndProcessTransactionData(txHash, rpcUrl, monitor);
+
+				if (monitor.isCancelled()) {
+					return;
+				}
+
+				// Phase 2: Generate Program database (30-40%)
+				String programFilename = null;
+				if (generateProgram) {
+					monitor.setMessage("Generating Program database...");
+					monitor.setProgress(30);
+					programFilename = appendSuffix(filename, ".evm");
+					generateProgramDatabase(txHash, programFilename, dataStore, monitor);
+				}
+
+				if (monitor.isCancelled()) {
+					return;
+				}
+
+				// Phase 3: Generate Trace database (40-100%)
+				if (generateTrace) {
+					String traceFilename = appendSuffix(filename, ".gzf");
+					String programNameForMapping = (generateProgram && generateTrace) ? programFilename : null;
+					generateTraceDatabase(txHash, traceFilename, dataStore, programNameForMapping, monitor);
+				}
+
+				if (monitor.isCancelled()) {
+					return;
+				}
+
+				monitor.setProgress(100);
+				monitor.setMessage("Complete!");
+
+				// Show success message on EDT
+				javax.swing.SwingUtilities.invokeLater(() -> {
+					StringBuilder message = new StringBuilder("Successfully generated:\n");
+					if (generateProgram) {
+						message.append("- Program database: ").append(filename).append(".evm\n");
+					}
+					if (generateTrace) {
+						message.append("- Trace database: ").append(filename).append(".gzf\n");
+					}
+					message.append("\nTransaction: ").append(txHash);
+
+					JOptionPane.showMessageDialog(
+						tool.getToolFrame(),
+						message.toString(),
+						"Success",
+						JOptionPane.INFORMATION_MESSAGE
+					);
+				});
+
+			} catch (Exception e) {
+				e.printStackTrace();
+				final String errorMsg = e.getMessage();
+				javax.swing.SwingUtilities.invokeLater(() -> {
+					showErrorPopup("Failed to load transaction trace", "Error: " + errorMsg);
+				});
+			}
+		}
+	}
+
+	private DataStore fetchAndProcessTransactionData(String txHash, String rpcUrl, TaskMonitor monitor) throws Exception {
+		MothraLog.progress(this, "Fetching transaction data from RPC...");
+
+		// Create RPC client
+		EthereumRpcClient rpcClient = new EthereumRpcClient(rpcUrl);
+
+		// Test connection (result stored in rpcClient; callRpc will throw if false)
+		monitor.setMessage("Testing RPC connection...");
+		boolean connected = rpcClient.testConnection();
+		MothraLog.info(this, "RPC connection test done (valid=" + connected + ")");
+		monitor.setProgress(5);
+
+		if (monitor.isCancelled()) {
+			throw new ghidra.util.exception.CancelledException();
+		}
+
+		// Create DataStore and fetch data
+		DataStore dataStore = new DataStore();
+		monitor.setMessage("Fetching call trace data...");
+		dataStore.fetchRawData(rpcClient, txHash, monitor);
+		monitor.setProgress(15);
+
+		if (monitor.isCancelled()) {
+			throw new ghidra.util.exception.CancelledException();
+		}
+
+		monitor.setMessage("Processing transaction data...");
+		dataStore.processAllData(rpcClient, monitor);
+		monitor.setProgress(30);
+
+		MothraLog.info(this, "✓ Found " + dataStore.getContractList().size() + " contracts");
+		MothraLog.info(this, "✓ Found " + dataStore.getInstructionSteps().size() + " instruction steps");
+
+		return dataStore;
+	}
+
+	private void generateProgramDatabase(String txHash, String filename, DataStore dataStore,
+			TaskMonitor monitor) throws Exception {
+		MothraLog.progress(this, "Generating Program database...");
+
+		ByteProvider provider = new ByteArrayProvider(hexStringToByteArray(txHash));
+		Project project = AppInfo.getActiveProject();
+		Object consumer = new Object();
+		MessageLog log = new MessageLog();
+
+		LanguageCompilerSpecPair compilerSpec = new LanguageCompilerSpecPair("evm:256:default", "default");
+		TraceLoader loader = new TraceLoader(dataStore);
+		LoadSpec loadSpec = new LoadSpec(loader, 0, compilerSpec, true);
+
+		monitor.setMessage("Creating Program database...");
+
+		ImporterSettings settings = new ImporterSettings(
+			provider,
+			filename,
+			project,
+			"",
+			false,
+			loadSpec,
+			new ArrayList<Option>(),
+			consumer,
+			log,
+			monitor
+		);
+
+		LoadResults<? extends DomainObject> results = loadSpec.getLoader().load(settings);
+
+		monitor.setMessage("Saving Program database...");
+		results.save(monitor);
+
+		MothraLog.info(this, "✓ Program database saved: " + filename);
+		monitor.setProgress(40);
+	}
+
+	private void generateTraceDatabase(String txHash, String filename, DataStore dataStore,
+			String programName, TaskMonitor monitor) throws Exception {
+		MothraLog.progress(this, "Generating Trace database...");
+
+		Project project = AppInfo.getActiveProject();
+
+		// Create temporary file for trace generation
+		File tempFile = File.createTempFile("mothra_trace_", ".gzf");
+		tempFile.deleteOnExit();
+
+		try {
+			// Generate trace database to temporary file
+			// Pass project and program name for static mappings if both were generated
+			// Progress: 40% to 95%
+			TraceGeneratorCore generator = new TraceGeneratorCore(dataStore, "evm:256:default");
+			generator.generateTraceDatabase(txHash, tempFile.getAbsolutePath(), project, programName, monitor);
+
+			if (monitor.isCancelled()) {
+				return;
+			}
+
+			MothraLog.info(this, "  → Importing trace into project...");
+			monitor.setMessage("Importing trace into project...");
+			monitor.setProgress(96);
+
+			// Import the trace file into Ghidra project
+			DomainFolder rootFolder = project.getProjectData().getRootFolder();
+			DomainFile domainFile = rootFolder.createFile(filename, tempFile, monitor);
+
+			MothraLog.info(this, "✓ Trace database imported: " + domainFile.getPathname());
+			monitor.setProgress(98);
+
+			// Open the trace in Ghidra on the Swing EDT to avoid deadlock.
+			// The modal task dialog blocks the EDT, so any synchronous Swing
+			// call from this background thread would deadlock.
+			if (domainFile != null) {
+				monitor.setMessage("Opening trace in Ghidra...");
+				final DomainFile df = domainFile;
+				javax.swing.SwingUtilities.invokeLater(() -> {
+					tool.acceptDomainFiles(new DomainFile[] { df });
+					MothraLog.info(this, "✓ Trace database opened in Ghidra");
+				});
+			}
+			monitor.setProgress(100);
+
+		} finally {
+			// Clean up temporary file
+			if (tempFile.exists()) {
+				tempFile.delete();
+			}
 		}
 	}
 }

@@ -13,8 +13,17 @@ define space ram      type=ram_space      size=4       default wordsize=1;
 define space stk      type=ram_space      size=2       wordsize=8;
 
 define space register type=register_space size=2;
-define register offset=0x00 size=2    [SP PC];    # size has to match stk size
-define register offset=0x04 size=32   [r0 r1 r2 r3 r4 r5 r6 r7];
+define register offset=0x00 size=2    [SP];       # size has to match stk size
+define register offset=0x02 size=4    [PC];
+define register offset=0x06 size=32   [r0 r1 r2 r3 r4 r5 r6 r7];
+# 4-byte register for JUMPI destination. Each PUSH writes the low 4 bytes
+# of its immediate here (from the ≤8-byte operand, NOT the 32-byte r0).
+# JUMPI reads this instead of extracting from r0, so the decompiler can
+# propagate the constant (r0 is 256-bit, exceeding the decompiler's
+# 128-bit constant limit).
+define register offset=0x106 size=4  [jumpdest];
+
+
 
 ################################################################
 
@@ -43,10 +52,11 @@ macro pop(x) {
 	SP = SP + 4;
 }
 
-macro halt() {
-	<loop>
-	  SP = SP;
-	  goto <loop>;
+# Termination macro - signals to decompiler that execution ends here
+# Using return [0:4] tells the decompiler control flow terminates
+macro terminate() {
+    local zero:4 = 0;
+    return [zero];
 }
 
 ################################################################
@@ -55,7 +65,7 @@ macro halt() {
 define pcodeop _stop;
 :STOP is op=0x00 {
     _stop();
-    halt();
+    terminate();
 }
 
 
@@ -499,42 +509,52 @@ define pcodeop _gas;
 }
 
 :PUSH1 imm8 is op=0x60 ; imm8 {
-    r0 = imm8;
+    local val:1 = imm8;
+    r0 = zext(val);
+    jumpdest = zext(val);
     push(r0);
 }
 
 :PUSH2 imm16 is op=0x61 ; imm16 {
-    r0 = imm16;
+    local val:2 = imm16;
+    r0 = zext(val);
+    jumpdest = zext(val);
     push(r0);
 }
 
 :PUSH3 imm24 is op=0x62 ; imm24 {
-    r0 = imm24;
+    local val:3 = imm24;
+    r0 = zext(val);
     push(r0);
 }
 
 :PUSH4 imm32 is op=0x63 ; imm32 {
-    r0 = imm32;
+    local val:4 = imm32;
+    r0 = zext(val);
     push(r0);
 }
 
 :PUSH5 imm40 is op=0x64 ; imm40 {
-    r0 = imm40;
+    local val:5 = imm40;
+    r0 = zext(val);
     push(r0);
 }
 
 :PUSH6 imm48 is op=0x65 ; imm48 {
-    r0 = imm48;
+    local val:6 = imm48;
+    r0 = zext(val);
     push(r0);
 }
 
 :PUSH7 imm56 is op=0x66 ; imm56 {
-    r0 = imm56;
+    local val:7 = imm56;
+    r0 = zext(val);
     push(r0);
 }
 
 :PUSH8 imm64 is op=0x67 ; imm64 {
-    r0 = imm64;
+    local val:8 = imm64;
+    r0 = zext(val);
     push(r0);
 }
 
@@ -660,18 +680,27 @@ define pcodeop _gas;
 
 
 :JUMP is op=0x56 {
-    pop(r0);
-    local p:4 = r0:4;
+    local target:32 = *[stk] SP;
+    SP = SP + 4;
+    r0 = *[stk] SP;
+    r1 = *[stk] (SP + 4);
+    r2 = *[stk] (SP + 8);
+    r3 = *[stk] (SP + 12);
+    r4 = *[stk] (SP + 16);
+    r5 = *[stk] (SP + 20);
+    r6 = *[stk] (SP + 24);
+    r7 = *[stk] (SP + 28);
+    local p:4 = target:4;
     local p1:4 = (inst_next & 0xFFFF0000) + p;
     goto [p1];
 }
 
 :JUMPI is op=0x57 {
-    pop(r0);
-    pop(r1);
+    SP = SP + 4;
+    r1 = *[stk] SP;
+    SP = SP + 4;
     if (r1 == 0) goto inst_next;
-    local p:4 = r0:4;
-    local p1:4 = (inst_next & 0xFFFF0000) + p;
+    local p1:4 = (inst_next & 0xFFFF0000) + jumpdest;
     goto [p1];
 }
 
@@ -785,131 +814,131 @@ define pcodeop _mcopy;
 
 :SWAP1 is op=0x90 {
     local p = SP + 4;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 :SWAP2 is op=0x91 {
     local p = SP + 8;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 :SWAP3 is op=0x92 {
     local p = SP + 12;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 :SWAP4 is op=0x93 {
     local p = SP + 16;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 :SWAP5 is op=0x94 {
     local p = SP + 20;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 :SWAP6 is op=0x95 {
     local p = SP + 24;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 :SWAP7 is op=0x96 {
     local p = SP + 28;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 :SWAP8 is op=0x97 {
     local p = SP + 32;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 :SWAP9 is op=0x98 {
     local p = SP + 36;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 :SWAP10 is op=0x99 {
     local p = SP + 40;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 :SWAP11 is op=0x9a {
     local p = SP + 44;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 :SWAP12 is op=0x9b {
     local p = SP + 48;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 :SWAP13 is op=0x9c {
     local p = SP + 52;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 :SWAP14 is op=0x9d {
     local p = SP + 56;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 :SWAP15 is op=0x9e {
     local p = SP + 60;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 
 :SWAP16 is op=0x9f {
     local p = SP + 64;
-    pop(r0);
-    r1 = *[stk] p;
-    *[stk] p = r0;
-    push(r1);
+    pop(r4);
+    r5 = *[stk] p;
+    *[stk] p = r4;
+    push(r5);
 }
 
 
@@ -993,7 +1022,8 @@ define pcodeop _callcode;
     pop(r3);
     pop(r4);
     pop(r5);
-    r0 = _callcode(r0, r1, r2, r3, r4, r5);
+    pop(r6);
+    r0 = _callcode(r0, r1, r2, r3, r4, r5, r6);
     push(r0);
 }
 
@@ -1002,7 +1032,7 @@ define pcodeop _return;
     pop(r0);
     pop(r1);
     _return(r0, r1);
-    halt();
+    terminate();
 }
 
 define pcodeop _delegatecall;
@@ -1011,7 +1041,9 @@ define pcodeop _delegatecall;
     pop(r1);
     pop(r2);
     pop(r3);
-    r0 = _delegatecall(r0, r1, r2, r3);
+    pop(r4);
+    pop(r5);
+    r0 = _delegatecall(r0, r1, r2, r3, r4, r5);
     push(r0);
 }
 
@@ -1031,7 +1063,9 @@ define pcodeop _staticcall;
     pop(r1);
     pop(r2);
     pop(r3);
-    r0 = _staticcall(r0, r1, r2, r3);
+    pop(r4);
+    pop(r5);
+    r0 = _staticcall(r0, r1, r2, r3, r4, r5);
     push(r0);
 }
 
@@ -1040,18 +1074,18 @@ define pcodeop _revert;
     pop(r0);
     pop(r1);
     _revert(r0, r1);
-    halt();
+    terminate();
 }
 
 define pcodeop _invalid;
 :INVALID is op=0xfe {
 	_invalid();
-	halt();
+	terminate();
 }
 
 define pcodeop _selfdestruct;
 :SELFDESTRUCT is op=0xff {
     pop(r0);
     _selfdestruct(r0);
-    halt();
+    terminate();
 }
